@@ -241,9 +241,9 @@ fun CaptureScreen(
 @Composable
 fun OcrResultScreen(
     draft: OcrDraft,
-    nextCardId: () -> String,
+    saving: Boolean,
     onCancel: () -> Unit,
-    onSave: (BusinessCardEntity) -> Unit,
+    onSave: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -296,13 +296,12 @@ fun OcrResultScreen(
         }
 
         PrimaryButton(
-            text = "저장하기",
+            text = if (saving) "저장 중…" else "저장하기",
             icon = HjpIcons.CHECK,
-            enabled = draft.fields.isNotEmpty(),
-        ) {
-            onSave(OcrCardMapper.toCard(draft.fields, nextCardId(), System.currentTimeMillis()))
-        }
-        SecondaryButton(text = "다시 촬영", onClick = onCancel)
+            enabled = draft.fields.isNotEmpty() && !saving,
+            onClick = onSave,
+        )
+        SecondaryButton(text = "다시 촬영", enabled = !saving, onClick = onCancel)
     }
 }
 

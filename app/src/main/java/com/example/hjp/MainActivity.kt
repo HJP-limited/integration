@@ -80,6 +80,7 @@ import com.example.hjp.ui.HjpIcons
 import com.example.hjp.ui.HomeScreen
 import com.example.hjp.ui.LoginScreen
 import com.example.hjp.ui.OcrDraft
+import com.example.hjp.ocr.OcrCardMapper
 import com.example.hjp.ui.OcrResultScreen
 import com.example.hjp.ui.SettingsScreen
 import com.example.hjp.ui.theme.HJPTheme
@@ -260,16 +261,35 @@ fun HjpApp(
                 modifier = content,
             )
 
-            is Overlay.OcrResult -> OcrResultScreen(
-                draft = current.draft,
-                nextCardId = searchService::nextOcrCardId,
-                onCancel = { overlay = null },
-                onSave = { card ->
-                    searchService.addCard(card)
-                    overlay = Overlay.CardDetail(card)
-                },
-                modifier = content,
-            )
+            is Overlay.OcrResult -> {
+                var saving by remember(current) { mutableStateOf(false) }
+                val scope = rememberCoroutineScope()
+                OcrResultScreen(
+                    draft = current.draft,
+                    saving = saving,
+                    onCancel = { overlay = null },
+                    onSave = {
+                        saving = true
+                        scope.launch {
+                            // id 발급은 전체 카드를 읽고, 저장은 FTS 를 다시 만든다. 메인
+                            // 스레드에서 하면 Room 이 IllegalStateException 으로 앱을 죽인다
+                            // (에뮬레이터에서 실제로 크래시).
+                            val card = withContext(Dispatchers.IO) {
+                                val saved = OcrCardMapper.toCard(
+                                    current.draft.fields,
+                                    searchService.nextOcrCardId(),
+                                    System.currentTimeMillis(),
+                                )
+                                searchService.addCard(saved)
+                                saved
+                            }
+                            saving = false
+                            overlay = Overlay.CardDetail(card)
+                        }
+                    },
+                    modifier = content,
+                )
+            }
 
             Overlay.Models -> ModelsScreen(
                 searchService = searchService,
