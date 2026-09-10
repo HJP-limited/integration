@@ -15,7 +15,7 @@ import org.junit.Test
  * 스트레스 테스트로 찾은 결정적 우회/거절감지 로직이 파이썬 확인용 구현과 같은 판정을
  * 내는지 본다. 기대값은 hybrid_server.py 로 실측한 결과와 동일하다.
  */
-class MainActivityTest {
+class TurnLogicTest {
 
     // ---- 자기참조 질문 -----------------------------------------------------
 

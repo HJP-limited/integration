@@ -24,3 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "HJP"
 include(":app")
+include(":core")
+include(":core-ocr")
+include(":desktop")

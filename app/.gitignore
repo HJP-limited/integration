@@ -1,1 +1,4 @@
 /build
+# KIE 분류기 int8 (113MB) — 바이너리라 저장소에 넣지 않는다.
+# 재생성 방법은 ../docs/OCR_ASSETS.md
+/src/main/assets/ocr/kie_minilm_int8.onnx

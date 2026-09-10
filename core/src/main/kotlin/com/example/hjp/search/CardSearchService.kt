@@ -1,10 +1,7 @@
 package com.example.hjp.search
 
-import android.content.Context
-import android.os.Build
 import com.example.hjp.data.BusinessCardEntity
 import com.example.hjp.data.CardEmbeddingEntity
-import com.example.hjp.data.HjpDatabase
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.system.measureTimeMillis
@@ -141,8 +138,16 @@ data class CardSearchResponse(
     }
 }
 
+/**
+ * 하이브리드 명함 검색. 저장소와 임베더를 주입받아 플랫폼에 묶이지 않는다 —
+ * 안드로이드(:app)와 데스크톱 러너(:desktop)가 **같은 인스턴스 코드**를 돌린다.
+ */
 class CardSearchService(
-    context: Context,
+    private val store: CardStore,
+    private val embeddingProviderFactory: () -> TextEmbeddingProvider,
+    private val seedSource: SeedSource = EmptySeedSource,
+    /** 기기/런타임 정보처럼 코어가 알 수 없는 진단 항목을 플랫폼이 채운다. */
+    private val platformDiagnostics: () -> JSONObject = { JSONObject() },
 ) {
     private companion object {
         /** RRF 상수. scripts/eval_search.py 의 RRF_K 와 같은 값이어야 한다. */
@@ -161,9 +166,8 @@ class CardSearchService(
         const val FUSION_POOL = 150
     }
 
-    private val appContext = context.applicationContext
-    private var embeddingProvider: TextEmbeddingProvider = GemmaEmbeddingProvider(context)
-    private val dao = HjpDatabase.getInstance(context).businessCardDao()
+    private var embeddingProvider: TextEmbeddingProvider = embeddingProviderFactory()
+
     private var ftsRebuilt = false
 
     // 가제티어는 카드 전체를 훑어 만들므로(5000장 기준) 질의마다 다시 만들면 안 된다.
@@ -173,7 +177,7 @@ class CardSearchService(
 
     private fun gazetteer(): CardGazetteer =
         cachedGazetteer ?: synchronized(this) {
-            cachedGazetteer ?: CardGazetteer(dao.allCards()).also { cachedGazetteer = it }
+            cachedGazetteer ?: CardGazetteer(store.allCards()).also { cachedGazetteer = it }
         }
 
     /**
@@ -193,7 +197,7 @@ class CardSearchService(
     fun reloadEmbeddingProvider() {
         // 이전 임베더의 네이티브 메모리를 먼저 해제해야 반복 로드 시 메모리가 쌓이지 않는다
         embeddingProvider.close()
-        embeddingProvider = GemmaEmbeddingProvider(appContext)
+        embeddingProvider = embeddingProviderFactory()
     }
 
     /** JSON 배열 문자열(명함 목록)로 DB 전체를 교체한다. 기존 임베딩도 함께 지운다. */
@@ -220,7 +224,7 @@ class CardSearchService(
             )
         }
         require(cards.isNotEmpty()) { "JSON에 명함이 없습니다." }
-        dao.replaceAllCards(cards)
+        store.replaceAllCards(cards)
         ftsRebuilt = true
         invalidateGazetteer()
         return cards.size
@@ -257,33 +261,33 @@ class CardSearchService(
         } catch (e: Throwable) {
             e.javaClass.simpleName + ": " + e.message.orEmpty()
         }
-        return JSONObject()
+        val report = JSONObject()
             .put("active_embedding_provider", embeddingProvider.name)
             .put("active_embedding_model_backed", embeddingProvider.isModelBacked)
             .put("active_embedding_status", embeddingProvider.diagnosticStatus)
             .put("embedding_dimensions", dimensions)
             .put("sample_embedding_ms", elapsedMs)
-            .put("room_card_count", dao.countCards())
-            .put("device_abis", JSONArray(Build.SUPPORTED_ABIS.toList()))
-            .put("internal_models_dir", java.io.File(appContext.filesDir, "models").absolutePath)
-            .put("external_models_dir", appContext.getExternalFilesDir("models")?.absolutePath ?: "")
+            .put("room_card_count", store.countCards())
             .put("error", error)
+        val platform = platformDiagnostics()
+        platform.keys().forEach { key -> report.put(key, platform.get(key)) }
+        return report
     }
 
     fun seedIfEmpty() {
-        if (dao.countCards() == 0) {
-            dao.clearFts()
+        if (store.countCards() == 0) {
+            store.clearFts()
             if (seedFromAsset()) {
                 seedEmbeddingsFromAsset()
             } else {
-                dao.upsertCards(sampleCards())
+                store.upsertCards(sampleCards())
             }
             ftsRebuilt = true
             invalidateGazetteer()
             return
         }
         if (!ftsRebuilt) {
-            dao.rebuildFts()
+            store.rebuildFts()
             ftsRebuilt = true
         }
     }
@@ -291,7 +295,7 @@ class CardSearchService(
     /** 등록된 전체 명함 수. "전체 몇 장이야?" 류 질문에 검색을 태우지 않고 바로 답하는 데 쓴다. */
     fun totalCardCount(): Int {
         seedIfEmpty()
-        return dao.countCards()
+        return store.countCards()
     }
 
     /**
@@ -301,7 +305,7 @@ class CardSearchService(
      */
     fun countByCondition(question: String): List<BusinessCardEntity>? {
         seedIfEmpty()
-        return countByKnownCondition(question, gazetteer(), dao.allCards())
+        return countByKnownCondition(question, gazetteer(), store.allCards())
     }
 
     /**
@@ -313,17 +317,17 @@ class CardSearchService(
         if (!embeddingProvider.isModelBacked) return
         // 수천 장 규모에서 검색할 때마다 전체 카드를 훑지 않도록, 개수가 맞으면 건너뛴다.
         // (카드 내용이 바뀌면 임포트 시 임베딩을 함께 지우므로 개수 비교로 충분)
-        val total = dao.countCards()
-        if (onProgress == null && dao.countEmbeddingsForModel(embeddingModelKey) >= total) return
+        val total = store.countCards()
+        if (onProgress == null && store.countEmbeddingsForModel(embeddingModelKey) >= total) return
         var done = 0
-        dao.allCards().forEach { card ->
+        store.allCards().forEach { card ->
             val text = cardEmbeddingInput(card)
             val hash = sha256(text)
-            val existing = dao.findEmbedding(card.id, embeddingModelKey, hash)
+            val existing = store.findEmbedding(card.id, embeddingModelKey, hash)
             if (existing == null) {
                 val vector = embeddingProvider.embedDocument(text)
                 if (vector.isNotEmpty()) {
-                    dao.upsertEmbedding(
+                    store.upsertEmbedding(
                         CardEmbeddingEntity(
                             card.id,
                             embeddingModelKey,
@@ -349,7 +353,7 @@ class CardSearchService(
      */
     fun searchByIds(cardIds: List<String>, limit: Int = 5): CardSearchResponse {
         seedIfEmpty()
-        val hits = cardIds.mapNotNull { dao.findCard(it) }
+        val hits = cardIds.mapNotNull { store.findCard(it) }
             .take(limit.coerceIn(1, 20))
             .mapIndexed { index, card ->
                 CardSearchHit(card, (limit - index).toDouble(), index + 1, null, 0f)
@@ -425,10 +429,10 @@ class CardSearchService(
             addAll(keywordRank.keys)
             addAll(vectorScores.map { it.first })
         }
-        if (candidateIds.isEmpty()) candidateIds.addAll(dao.allCards().map { it.id })
+        if (candidateIds.isEmpty()) candidateIds.addAll(store.allCards().map { it.id })
 
         var hits = candidateIds.mapNotNull { id ->
-            val card = dao.findCard(id) ?: return@mapNotNull null
+            val card = store.findCard(id) ?: return@mapNotNull null
             val score = rrf(keywordRank[id]) + rrf(vectorRank[id])
             CardSearchHit(card, score, keywordRank[id], vectorRank[id], similarityById[id] ?: 0f)
         }.sortedWith(
@@ -477,12 +481,12 @@ class CardSearchService(
     private fun keywordHits(query: AnalyzedSearchQuery, limit: Int): List<CardSearchHit> {
         val ids = keywordIdsTiered(query, limit * 4)
         val ranked = if (ids.isEmpty() && query.keywordQuery.isBlank()) {
-            dao.allCards().map { it.id }
+            store.allCards().map { it.id }
         } else {
             ids
         }
         return ranked
-            .mapNotNull { dao.findCard(it) }
+            .mapNotNull { store.findCard(it) }
             .take(limit)
             .mapIndexed { index, card ->
                 CardSearchHit(
@@ -503,19 +507,19 @@ class CardSearchService(
         if (out.size < limit) ftsAllTermsMatch(terms)?.let { out.addAll(safeFtsSearch(it, limit)) }
         if (out.size < limit) ftsPrefixMatch(terms)?.let { out.addAll(safeFtsSearch(it, limit)) }
         // LIKE 폴백에서만 동의어 확장 — "인공지능" 검색이 "AI" 태그 카드도 잡게.
-        if (out.size < limit) expandSynonymsForFallback(terms).forEach { out.addAll(dao.searchLikeIds("%$it%", limit)) }
+        if (out.size < limit) expandSynonymsForFallback(terms).forEach { out.addAll(store.searchLikeIds("%$it%", limit)) }
         return out.take(limit)
     }
 
     private fun safeFtsSearch(match: String, limit: Int): List<String> =
         try {
-            dao.searchFtsIds(match, limit)
+            store.searchFtsIds(match, limit)
         } catch (_: Throwable) {
             emptyList()
         }
 
     private fun vectorScores(queryVector: FloatArray, limit: Int): List<Pair<String, Float>> =
-        dao.embeddingsForModel(embeddingModelKey)
+        store.embeddingsForModel(embeddingModelKey)
             .mapNotNull { embedding ->
                 val vector = embedding.vector.toFloatArray(embedding.dimensions)
                 embedding.cardId to cosine(queryVector, vector)
@@ -525,12 +529,10 @@ class CardSearchService(
 
     private fun rrf(rank: Int?): Double = if (rank == null) 0.0 else 1.0 / (RRF_K + rank)
 
-    /** APK에 번들된 시드 데이터(assets/cards/cards_seed.json)가 있으면 그걸로 채운다. */
+    /** 번들된 시드 데이터(안드로이드: assets/cards/cards_seed.json)가 있으면 그걸로 채운다. */
     private fun seedFromAsset(): Boolean =
         try {
-            appContext.assets.open("cards/cards_seed.json").use { input ->
-                importCardsJson(input.readBytes().toString(Charsets.UTF_8)) > 0
-            }
+            seedSource.cardsSeedJson()?.let { importCardsJson(it) > 0 } ?: false
         } catch (_: Throwable) {
             false
         }
@@ -542,23 +544,19 @@ class CardSearchService(
      */
     private fun seedEmbeddingsFromAsset() {
         try {
-            val ids = JSONArray(
-                appContext.assets.open("cards/cards_embeddings_ids.json").use {
-                    it.readBytes().toString(Charsets.UTF_8)
-                }
-            )
-            val bytes = appContext.assets.open("cards/cards_embeddings.bin").use { it.readBytes() }
+            val (idsJson, bytes) = seedSource.precomputedEmbeddings() ?: return
+            val ids = JSONArray(idsJson)
             val dimensions = 768
             val vectorBytes = dimensions * 4
             val now = System.currentTimeMillis()
             for (i in 0 until ids.length()) {
                 val cardId = ids.getString(i)
-                val card = dao.findCard(cardId) ?: continue
+                val card = store.findCard(cardId) ?: continue
                 val start = i * vectorBytes
                 if (start + vectorBytes > bytes.size) break
                 val blob = bytes.copyOfRange(start, start + vectorBytes)
                 val hash = sha256(cardEmbeddingInput(card))
-                dao.upsertEmbedding(CardEmbeddingEntity(cardId, embeddingModelKey, blob, dimensions, hash, now))
+                store.upsertEmbedding(CardEmbeddingEntity(cardId, embeddingModelKey, blob, dimensions, hash, now))
             }
         } catch (_: Throwable) {
             // 번들된 사전 계산 벡터가 없거나 손상된 경우 — 검색은 키워드로, 벡터는 필요할 때 온디바이스로 계산됨

@@ -47,6 +47,14 @@ android {
 }
 
 dependencies {
+    // 검색·멀티턴 로직 본체. :desktop 러너도 같은 모듈을 쓰므로 규칙이 한 곳에만 있다.
+    implementation(project(":core"))
+    // OCR 검출·인식·KIE. 같은 이유로 코드는 :core-ocr 한 곳에 있고, 여기서는 안드로이드용
+    // 런타임(aar)만 제공한다 — :desktop 은 같은 코드에 데스크톱 jar 를 물린다.
+    implementation(project(":core-ocr"))
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0")
+    implementation("org.opencv:opencv:4.12.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

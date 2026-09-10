@@ -8,29 +8,25 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.LogSeverity
 import java.io.File
 
-enum class LlmRole(val fileNames: List<String>, val assetPath: String, val displayName: String) {
-    ToolCalling(
-        fileNames = listOf("functiongemma_270m.litertlm"),
-        assetPath = "gemma/functiongemma_270m.litertlm",
-        displayName = "FunctionGemma 270M",
-    ),
+/**
+ * 안드로이드용 [ChatEngineProvider] — LiteRT-LM 으로 모델을 찾아 연다.
+ * 라우팅·프롬프트 규칙은 :core 의 turn 파이프라인에 있고, 여기는 로딩만 담당한다.
+ */
+class LiteRtChatEngineProvider(context: Context) : ChatEngineProvider {
+    private val appContext = context.applicationContext
 
-    // 후보 순서대로 찾는다: Gemma 4 E2B(최우선, RAM 8GB+ 기기) -> Gemma 3 1B -> Gemma 3 270M IT(저사양 기기용 경량)
-    Chat(
-        fileNames = listOf("gemma-4-E2B-it.litertlm", "gemma3-1b-it-int4.litertlm", "gemma3-270m-it-q8.litertlm"),
-        assetPath = "gemma/gemma-4-E2B-it.litertlm",
-        displayName = "Chat Gemma 4 E2B",
-    ),
-    ;
+    override fun modelStatus(role: LlmRole): String =
+        LiteRtLmChatEngine.modelStatus(appContext, role)
 
-    val fileName: String get() = fileNames.first()
+    override fun openShared(role: LlmRole): ChatEngine =
+        LiteRtLmChatEngine.openShared(appContext, role)
 }
 
 class LiteRtLmChatEngine private constructor(
     private val engine: Engine,
     val backendName: String,
-    val loadedFileName: String,
-) : AutoCloseable {
+    override val loadedFileName: String,
+) : ChatEngine, AutoCloseable {
 
     // 채팅 탭 전용 지속 대화 세션. 한 번 만들면 여러 턴에 걸쳐 유지되어
     // 모델이 이전 질문/답변을 기억한다(멀티턴). 단발성 generate()와 분리한다.
@@ -55,7 +51,7 @@ class LiteRtLmChatEngine private constructor(
 
     /** 맥락 없는 단발성 생성(스모크 테스트 등). 채팅 대화 세션을 건드리지 않는다. */
     @Synchronized
-    fun generate(prompt: String): String {
+    override fun generate(prompt: String): String {
         val conversation = engine.createConversation()
         try {
             return finishGenerate(conversation.sendMessage(prompt))
@@ -77,8 +73,8 @@ class LiteRtLmChatEngine private constructor(
             .replace(Regex("<pad>|<eos>|<bos>|<end_of_turn>|<start_of_turn>|<unk>"), "")
             .trim()
         // 소형 모델이 같은 문자열을 무한 반복하는 degenerate 출력도 무효 처리한다 ("</h4></h4>..." 등)
-        if (Regex("(.{3,40})\\1{4,}").containsMatchIn(cleaned)) return EMPTY_RESPONSE
-        return cleaned.ifBlank { EMPTY_RESPONSE }
+        if (Regex("(.{3,40})\\1{4,}").containsMatchIn(cleaned)) return EMPTY_LLM_RESPONSE
+        return cleaned.ifBlank { EMPTY_LLM_RESPONSE }
     }
 
     override fun close() {
@@ -88,8 +84,6 @@ class LiteRtLmChatEngine private constructor(
     }
 
     companion object {
-        const val EMPTY_RESPONSE = "(empty LLM response)"
-
         // 엔진을 열고 닫을 때마다 네이티브 메모리가 조금씩 새서(LiteRT-LM), 질문을 반복하면
         // 저사양 기기에서 앱이 통째로 죽는다. 그래서 엔진 하나를 로드해 두고 계속 재사용한다.
         private var shared: LiteRtLmChatEngine? = null
