@@ -51,6 +51,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -210,9 +211,12 @@ fun HjpApp(
     initialToolLlmStatus: String,
     initialChatLlmStatus: String,
 ) {
-    // SCR-01. 인증이 없으므로 진짜 관문이 아니라 첫 화면일 뿐이다 — 디버그 인텐트로
-    // 질문이 들어오면 건너뛴다. 안 그러면 adb 시나리오가 로그인 화면에서 막힌다.
-    var signedIn by remember { mutableStateOf(false) }
+    // SCR-01. 인증이 없으므로 진짜 관문이 아니라 첫 화면일 뿐이다.
+    //
+    // 초기값을 **구성 시점에** 정한다 — 디버그 인텐트로 들어온 질문이 대기 중이면 로그인
+    // 화면을 아예 거치지 않는다. 예전에는 effect 로 뒤늦게 넘겼는데, 그러면 로그인 화면이
+    // 한 번 그려졌다가 교체되면서 채팅 화면이 처리한 말풍선이 사라졌다(실측).
+    var signedIn by rememberSaveable { mutableStateOf(DebugQuestion.pending != null) }
     var selectedTab by remember { mutableStateOf(AppTab.Home) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     // 디버그 인텐트로 질문이 들어오면 Agent 화면으로 옮긴다 — 그 화면이 떠 있어야
