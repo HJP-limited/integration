@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 카메라 앱에 넘길 촬영 결과 파일. 캐시라 지워져도 무방하다. -->
+    <cache-path name="captures" path="captures/" />
+</paths>

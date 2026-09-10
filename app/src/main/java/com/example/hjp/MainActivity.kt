@@ -59,7 +59,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.hjp.agent.AgentSession
 import com.example.hjp.agent.ConversationalFollowup
@@ -71,6 +73,14 @@ import com.example.hjp.search.CardSearchHit
 import com.example.hjp.search.CardSearchResponse
 import com.example.hjp.search.CardSearchService
 import com.example.hjp.search.createCardSearchService
+import com.example.hjp.ui.CardDetailScreen
+import com.example.hjp.ui.CardListScreen
+import com.example.hjp.ui.CaptureScreen
+import com.example.hjp.ui.HjpIcons
+import com.example.hjp.ui.HomeScreen
+import com.example.hjp.ui.OcrDraft
+import com.example.hjp.ui.OcrResultScreen
+import com.example.hjp.ui.SettingsScreen
 import com.example.hjp.ui.theme.HJPTheme
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -128,10 +138,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class AppTab(val label: String) {
-    Cards("명함"),
-    Chat("채팅"),
-    Models("모델"),
+/** 화면 목업(SCR-01~09)의 하단 탭 5개. */
+internal enum class AppTab(val label: String, val icon: String) {
+    Home("홈", HjpIcons.HOME),
+    Cards("명함", HjpIcons.CARDS),
+    Capture("촬영", HjpIcons.CAMERA),
+    Agent("Agent", HjpIcons.AGENT),
+    Settings("설정", HjpIcons.SETTINGS),
+}
+
+/**
+ * 탭 위에 겹쳐 뜨는 화면. 목업의 SCR-04(OCR 결과)·SCR-06(상세)이 여기 해당한다 —
+ * 탭이 아니라 흐름의 일부라서 뒤로 가면 원래 탭으로 돌아와야 한다.
+ */
+internal sealed interface Overlay {
+    data class CardDetail(val card: BusinessCardEntity) : Overlay
+    data class OcrResult(val draft: OcrDraft) : Overlay
+    data object Models : Overlay
 }
 
 /** 실기기 진단 로그 태그. `adb logcat -s HJP` 로 본다. */
@@ -185,11 +208,15 @@ fun HjpApp(
     initialToolLlmStatus: String,
     initialChatLlmStatus: String,
 ) {
-    var selectedTab by remember { mutableStateOf(AppTab.Cards) }
-    // 디버그 인텐트로 질문이 들어오면 채팅 화면으로 옮긴다 — 그 화면이 떠 있어야
+    var selectedTab by remember { mutableStateOf(AppTab.Home) }
+    var overlay by remember { mutableStateOf<Overlay?>(null) }
+    // 디버그 인텐트로 질문이 들어오면 Agent 화면으로 옮긴다 — 그 화면이 떠 있어야
     // 질문이 처리된다(adb 로 탭을 누르는 건 기기에서 잘 안 먹혔다).
     LaunchedEffect(DebugQuestion.pending) {
-        if (DebugQuestion.pending != null) selectedTab = AppTab.Chat
+        if (DebugQuestion.pending != null) {
+            selectedTab = AppTab.Agent
+            overlay = null
+        }
     }
     var toolLlmStatus by remember { mutableStateOf(initialToolLlmStatus) }
     var chatLlmStatus by remember { mutableStateOf(initialChatLlmStatus) }
@@ -203,132 +230,93 @@ fun HjpApp(
             .fillMaxSize()
             .imePadding(),
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 AppTab.entries.forEach { tab ->
                     NavigationBarItem(
-                        selected = selectedTab == tab,
-                        onClick = { selectedTab = tab },
-                        label = { Text(tab.label) },
-                        icon = { Text(tab.label.take(1)) },
+                        selected = selectedTab == tab && overlay == null,
+                        onClick = { selectedTab = tab; overlay = null },
+                        label = { Text(tab.label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        icon = { Text(tab.icon, fontSize = 18.sp) },
                     )
                 }
             }
         },
     ) { innerPadding ->
-        when (selectedTab) {
-            AppTab.Cards -> CardsScreen(
-                searchService = searchService,
-                modifier = Modifier.padding(innerPadding),
+        val content = Modifier.padding(innerPadding)
+        when (val current = overlay) {
+            is Overlay.CardDetail -> CardDetailScreen(
+                card = current.card,
+                onBack = { overlay = null },
+                modifier = content,
             )
 
-            AppTab.Chat -> ChatScreen(
-                searchService = searchService,
-                modifier = Modifier.padding(innerPadding),
+            is Overlay.OcrResult -> OcrResultScreen(
+                draft = current.draft,
+                nextCardId = searchService::nextOcrCardId,
+                onCancel = { overlay = null },
+                onSave = { card ->
+                    searchService.addCard(card)
+                    overlay = Overlay.CardDetail(card)
+                },
+                modifier = content,
             )
 
-            AppTab.Models -> ModelsScreen(
+            Overlay.Models -> ModelsScreen(
                 searchService = searchService,
                 toolLlmStatus = toolLlmStatus,
                 chatLlmStatus = chatLlmStatus,
                 onToolLlmStatusChanged = { toolLlmStatus = it },
                 onChatLlmStatusChanged = { chatLlmStatus = it },
-                modifier = Modifier.padding(innerPadding),
+                modifier = content,
             )
+
+            null -> when (selectedTab) {
+                AppTab.Home -> HomeScreen(
+                    searchService = searchService,
+                    onCapture = { selectedTab = AppTab.Capture },
+                    onAgent = { selectedTab = AppTab.Agent },
+                    onSeeAll = { selectedTab = AppTab.Cards },
+                    onCardClick = { overlay = Overlay.CardDetail(it) },
+                    modifier = content,
+                )
+
+                AppTab.Cards -> CardListScreen(
+                    searchService = searchService,
+                    onCardClick = { overlay = Overlay.CardDetail(it) },
+                    modifier = content,
+                )
+
+                AppTab.Capture -> CaptureScreen(
+                    onRecognized = { overlay = Overlay.OcrResult(it) },
+                    modifier = content,
+                )
+
+                AppTab.Agent -> ChatScreen(
+                    searchService = searchService,
+                    modifier = content,
+                )
+
+                AppTab.Settings -> {
+                    var cardCount by remember { mutableStateOf<Int?>(null) }
+                    LaunchedEffect(Unit) {
+                        cardCount = withContext(Dispatchers.IO) { searchService.totalCardCount() }
+                    }
+                    SettingsScreen(
+                        engineStatus = searchService.engineStatus,
+                        toolLlmStatus = toolLlmStatus,
+                        chatLlmStatus = chatLlmStatus,
+                        cardCount = cardCount,
+                        onOpenModels = { overlay = Overlay.Models },
+                        modifier = content,
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun CardsScreen(
-    searchService: CardSearchService,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var response by remember { mutableStateOf<CardSearchResponse?>(null) }
-    var message by remember { mutableStateOf("이름, 회사, 직무, 지역, 전화번호로 검색해 보세요.") }
-    var selectedCard by remember { mutableStateOf<BusinessCardEntity?>(null) }
-
-    val dataPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            message = "명함 데이터를 불러오는 중..."
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val json = context.contentResolver.openInputStream(uri).use { input ->
-                        requireNotNull(input) { "파일을 열 수 없습니다." }
-                        input.readBytes().toString(Charsets.UTF_8)
-                    }
-                    searchService.importCardsJson(json)
-                }
-            }
-            result.onSuccess { count ->
-                response = null
-                message = "명함 ${count}장을 불러왔습니다. 기존 데이터와 임베딩은 교체되었습니다."
-            }.onFailure {
-                message = "데이터 불러오기 실패: ${it.message ?: it.javaClass.simpleName}"
-            }
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("명함 목록", style = MaterialTheme.typography.titleLarge)
-        Text("단어 검색 전용 화면입니다. LLM이나 임베딩 모델 없이도 동작합니다.", style = MaterialTheme.typography.bodyMedium)
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            label = { Text("검색어") },
-            placeholder = { Text("예: 김지원, 비전, AI 개발자, 1234") },
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 1,
-        )
-        Button(
-            onClick = {
-                scope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        runCatching { searchService.searchKeywordOnly(query, 20) }
-                    }
-                    result.onSuccess {
-                        response = it
-                        message = if (it.results.isEmpty()) "검색 결과가 없습니다." else "${it.results.size}개 결과를 찾았습니다."
-                    }.onFailure {
-                        response = null
-                        message = "검색 중 문제가 생겼습니다: ${it.message ?: it.javaClass.simpleName}"
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("검색")
-        }
-        OutlinedButton(
-            onClick = { dataPicker.launch(arrayOf("application/json", "*/*")) },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("명함 데이터 가져오기 (JSON)")
-        }
-        Text(message, style = MaterialTheme.typography.bodyMedium)
-        response?.let {
-            SearchSummary(it)
-            it.results.forEach { hit ->
-                BusinessCardResultCard(hit, onClick = { selectedCard = hit.card })
-            }
-        }
-    }
-    selectedCard?.let { card ->
-        CardDetailDialog(card, onDismiss = { selectedCard = null })
-    }
-}
-
-@Composable
-private fun ChatScreen(
+internal fun ChatScreen(
     searchService: CardSearchService,
     modifier: Modifier = Modifier,
 ) {
@@ -630,7 +618,7 @@ private fun TypingBubble() {
 }
 
 @Composable
-private fun ModelsScreen(
+internal fun ModelsScreen(
     searchService: CardSearchService,
     toolLlmStatus: String,
     chatLlmStatus: String,

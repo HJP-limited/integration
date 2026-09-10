@@ -230,6 +230,36 @@ class CardSearchService(
         return cards.size
     }
 
+    /**
+     * 명함 한 장을 추가하거나 갱신한다. OCR 로 새로 찍은 카드가 들어오는 경로다.
+     *
+     * 가제티어를 무효화해야 방금 넣은 이름·지역이 곧바로 검색 어휘가 된다 — 안 하면
+     * 저장 직후 "김정 찾아줘"가 기권 처리된다. 벡터는 다음 하이브리드 검색에서
+     * indexEmbeddings() 가 개수 차이를 보고 채운다.
+     */
+    fun addCard(card: BusinessCardEntity) {
+        seedIfEmpty()
+        store.upsertCards(listOf(card))
+        invalidateGazetteer()
+    }
+
+    /** 최근 추가·수정된 순서로 [limit] 장. 홈 화면의 "최근 추가 명함". */
+    fun recentCards(limit: Int): List<BusinessCardEntity> {
+        seedIfEmpty()
+        return store.allCards()
+            .sortedByDescending { it.updatedAtMillis }
+            .take(limit.coerceAtLeast(0))
+    }
+
+    /** 아직 쓰이지 않은 카드 id. OCR 로 만든 카드에 붙인다. */
+    fun nextOcrCardId(): String {
+        seedIfEmpty()
+        val used = store.allCards().mapTo(HashSet()) { it.id }
+        var n = used.size + 1
+        while ("OCR%05d".format(n) in used) n++
+        return "OCR%05d".format(n)
+    }
+
     val engineStatus: String
         get() = "${embeddingProvider.name} / Room FTS"
 

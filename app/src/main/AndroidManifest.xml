@@ -40,6 +40,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 명함 촬영: 카메라 앱에 넘길 출력 파일 URI 를 만든다.
+             ACTION_IMAGE_CAPTURE 는 카메라 앱이 권한을 처리하므로 CAMERA 권한 선언은 필요 없다. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>
