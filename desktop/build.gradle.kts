@@ -29,6 +29,10 @@ dependencies {
     // 안드로이드는 org.json 이 플랫폼에 내장이라 :core 가 compileOnly 로 두었다.
     // JVM 에는 없으므로 여기서 실제 구현을 넣는다.
     implementation("org.json:json:20240303")
+
+    // Room 이 안드로이드에서 돌리는 것과 **같은 SQLite 엔진**. FTS4 MATCH 의미를 코드로
+    // 흉내 내지 않고 같은 SQL 을 그대로 실행해야 노트북 지표가 앱을 대변한다.
+    implementation("org.xerial:sqlite-jdbc:3.50.3.0")
 }
 
 application {

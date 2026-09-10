@@ -31,6 +31,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 노트북 에뮬레이터로 화면을 눈으로 확인하려면 x86_64 가 필요하다.
+            // litertlm(대화)·onnxruntime·opencv(OCR)는 x86_64 를 제공하고,
+            // EmbeddingGemma(localagents-rag)만 arm64 전용이라 에뮬레이터에서는 로드에
+            // 실패한다 — GemmaEmbeddingProvider 가 이를 잡아 키워드 검색으로 폴백하므로
+            // 벡터 검색만 빠지고 나머지는 그대로 돈다.
+            ndk {
+                abiFilters += "x86_64"
+            }
+        }
         release {
             optimization {
                 enable = false
