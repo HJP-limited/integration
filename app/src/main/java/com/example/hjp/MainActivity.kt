@@ -78,6 +78,7 @@ import com.example.hjp.ui.CardListScreen
 import com.example.hjp.ui.CaptureScreen
 import com.example.hjp.ui.HjpIcons
 import com.example.hjp.ui.HomeScreen
+import com.example.hjp.ui.LoginScreen
 import com.example.hjp.ui.OcrDraft
 import com.example.hjp.ui.OcrResultScreen
 import com.example.hjp.ui.SettingsScreen
@@ -208,15 +209,24 @@ fun HjpApp(
     initialToolLlmStatus: String,
     initialChatLlmStatus: String,
 ) {
+    // SCR-01. 인증이 없으므로 진짜 관문이 아니라 첫 화면일 뿐이다 — 디버그 인텐트로
+    // 질문이 들어오면 건너뛴다. 안 그러면 adb 시나리오가 로그인 화면에서 막힌다.
+    var signedIn by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(AppTab.Home) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     // 디버그 인텐트로 질문이 들어오면 Agent 화면으로 옮긴다 — 그 화면이 떠 있어야
     // 질문이 처리된다(adb 로 탭을 누르는 건 기기에서 잘 안 먹혔다).
     LaunchedEffect(DebugQuestion.pending) {
         if (DebugQuestion.pending != null) {
+            signedIn = true
             selectedTab = AppTab.Agent
             overlay = null
         }
+    }
+
+    if (!signedIn) {
+        LoginScreen(onEnter = { signedIn = true }, modifier = Modifier.fillMaxSize())
+        return
     }
     var toolLlmStatus by remember { mutableStateOf(initialToolLlmStatus) }
     var chatLlmStatus by remember { mutableStateOf(initialChatLlmStatus) }
