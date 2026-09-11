@@ -1,109 +1,68 @@
-# Real Device Test
+# 실기기 테스트
 
-This branch is configured for 3 on-device models, split by role:
+arm64 안드로이드 기기에서 앱을 돌리는 절차. **아직 실기기에서 돌려본 적이 없다** — 지금까지
+확인은 노트북 러너와 x86_64 에뮬레이터로 했다.
 
-- `embeddinggemma-300m.tflite` — embedding (keyword+semantic hybrid search)
-- FunctionGemma 270M LiteRT-LM (`functiongemma_270m.litertlm`) — tool-calling role
-- Gemma 4 E2B IT LiteRT-LM (`gemma-4-E2B-it.litertlm`) — chat/RAG answer role (fallback: `gemma3-1b-it-int4.litertlm`, `gemma3-270m-it-q8.litertlm`)
-- Room FTS + vector RRF search
+## 무엇이 어디에 있나
 
-## Model Files
+OCR·KIE 자산(141MB)은 **APK 안에** 들어간다. 따로 넣을 것이 없다.
 
-For real-device testing, keep large models out of the APK and push them after install.
-
-The EmbeddingGemma runtime is the AI Edge RAG SDK (GemmaEmbeddingModel) and needs TWO files:
+생성·임베딩 모델(3.1GB)은 APK 에 넣지 않고 설치 후 기기로 민다.
 
 ```text
-/sdcard/Android/data/com.example.hjp/files/models/embeddinggemma-300m.tflite
-/sdcard/Android/data/com.example.hjp/files/models/sentencepiece.model
+/sdcard/Android/data/com.example.hjp/files/models/
+  gemma-4-E2B-it.litertlm        2.6G  대화 답변
+  functiongemma_270m.litertlm    289M  저메모리 폴백
+  embeddinggemma-300m.tflite     179M  벡터 검색  ┐ 한 세트다.
+  sentencepiece.model            4.7M  토크나이저 ┘ 둘 중 하나만 있으면 임베더가 안 뜬다
 ```
 
-Both come from the `litert-community/embeddinggemma-300m` Hugging Face repo.
-Note: the RAG SDK ships arm64-only native libs — embedding will not run on an x86_64 emulator.
+앱은 내부 경로(`/data/data/com.example.hjp/files/models/`)도 같이 본다.
 
-The FunctionGemma 270M LiteRT-LM model (tool-calling) is expected at:
+이 파일들은 `.gitignore` 대상이라 저장소에 없다. 노트북에서는 `HJP_limitededition-main/models/`
+에 있고, 스크립트가 `HJP_MODEL_DIR` → `<repo>/models` → 옆 저장소 순으로 찾는다.
 
-```text
-/sdcard/Android/data/com.example.hjp/files/models/functiongemma_270m.litertlm
-```
+## USB 설치
 
-The Gemma 4 E2B IT LiteRT-LM model (chat/RAG answers) is expected at:
-
-```text
-/sdcard/Android/data/com.example.hjp/files/models/gemma-4-E2B-it.litertlm
-```
-
-The app also checks its private files directory:
-
-```text
-/data/data/com.example.hjp/files/models/embeddinggemma-300m.tflite
-/data/data/com.example.hjp/files/models/functiongemma_270m.litertlm
-/data/data/com.example.hjp/files/models/gemma-4-E2B-it.litertlm
-```
-
-Large model files are ignored by git.
-
-## USB Install
-
-Enable Developer Options and USB debugging on an Android arm64 device, then run:
+개발자 옵션과 USB 디버깅을 켠 뒤:
 
 ```powershell
 .\scripts\install_real_device_debug.ps1
 ```
 
-Manual equivalent:
+하는 일 — 모델 폴더 확인(못 찾으면 **설치 전에 멈춘다**) → `:app:assembleDebug` →
+APK 안에 `liblitertlm_jni.so`·`libgemma_embedding_model_jni.so`·`kie_minilm_int8.onnx` 가
+실제로 들어갔는지 확인 → 설치 → 모델 4개 전송(크기가 같으면 건너뜀).
 
-```powershell
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-$env:ANDROID_HOME='C:\Users\babie\AppData\Local\Android\Sdk'
-.\gradlew.bat :app:assembleDebug --no-daemon
-& "$env:ANDROID_HOME\platform-tools\adb.exe" devices -l
-& "$env:ANDROID_HOME\platform-tools\adb.exe" install -r app\build\outputs\apk\debug\app-debug.apk
-& "$env:ANDROID_HOME\platform-tools\adb.exe" shell mkdir -p /sdcard/Android/data/com.example.hjp/files/models
-& "$env:ANDROID_HOME\platform-tools\adb.exe" push ..\models\legacy\embeddinggemma-300m.tflite /sdcard/Android/data/com.example.hjp/files/models/embeddinggemma-300m.tflite
-# Optional, when you have the FunctionGemma file:
-# & "$env:ANDROID_HOME\platform-tools\adb.exe" push C:\path\to\functiongemma_270m.litertlm /sdcard/Android/data/com.example.hjp/files/models/functiongemma_270m.litertlm
-# Optional, when you have the Gemma 4 E2B IT file:
-# & "$env:ANDROID_HOME\platform-tools\adb.exe" push C:\path\to\gemma-4-E2B-it.litertlm /sdcard/Android/data/com.example.hjp/files/models/gemma-4-E2B-it.litertlm
-& "$env:ANDROID_HOME\platform-tools\adb.exe" shell am start -n com.example.hjp/.MainActivity
-```
+`-SkipBuild` 로 빌드를 건너뛰고, `-ForceModels` 로 크기가 같아도 다시 민다.
 
-Open the app and press `Diagnostics`.
+모델 전송이 권한 오류로 실패하면 앱을 한 번 연 뒤 다시 돌린다 — 앱별 외부 폴더는 설치·실행
+후에 생긴다.
 
-Expected real-device result:
+## 확인
 
-```json
-{
-  "active_embedding_model_backed": true,
-  "embedding_dimensions": 768
-}
-```
+앱 → **설정 탭 → 모델** 에서 대화 모델·도구 호출 모델·검색 엔진 상태를 본다.
+**모델 파일 관리** 를 누르면 모델별로 `파일 가져오기` / `동작 확인` 이 있고, 임베딩 모델에는
+`토크나이저 가져오기` 가 따로 있다.
 
-If model push fails with a permission error, open the app once first, then rerun the `mkdir` and `push` commands. Android creates the app-specific external directory after install/app start.
+임베딩이 붙었으면 `동작 확인` 이 `active_embedding_model_backed: true`, 768차원을 보고한다.
 
-## Temporary Sharing Options
+**모델이 없어도 앱은 돈다.** 임베더가 없으면 키워드 검색으로, KIE 가 없으면 정규식 폴백으로
+내려간다(라인 정확도 98.0% → 85.3%). 대화 모델이 없으면 검색 결과까지만 나온다. 조용히
+내려가므로 상태 화면을 보고 판단해야 한다.
 
-For one phone next to the development PC, use USB install. This is fastest.
+## USB 없이
 
-For another tester, use one of these:
+1. `app/build/outputs/apk/debug/app-debug.apk` 를 폰으로 보내고 "출처를 알 수 없는 앱" 설치를
+   허용한다. 디버그 키로 서명돼 있어 테스트 설치는 된다 — 배포용은 아니다.
+2. 모델 파일을 폰의 Downloads 로 보낸다.
+3. 앱 → 설정 → 모델 파일 관리 → 모델마다 `파일 가져오기` 로 고른다.
+   임베딩은 `.tflite` 와 `sentencepiece.model` 을 **둘 다** 넣어야 한다.
 
-- Send `app/build/outputs/apk/debug/app-debug.apk` directly and allow "install unknown apps" on the phone.
-- Send `embeddinggemma-300m.tflite` to the phone Downloads folder, open the app, press `임베딩 가져오기`, and choose the file.
-- Send `functiongemma_270m.litertlm` the same way, press `Tool LLM 가져오기`, and choose the file.
-- Send `gemma-4-E2B-it.litertlm` the same way, press `Chat LLM 가져오기`, and choose the file.
-- Use Firebase App Distribution for a small tester group.
-- Use Google Play Internal App Sharing or Internal Testing if the app is already connected to a Play Console project.
+Gemma 4 E2B 가 2.6GB 라 이 경로는 느리다. 케이블이 있으면 USB 쪽이 낫다.
 
-Debug APKs are signed with the local debug key and are fine for temporary device testing. Do not use them for public release.
+## 릴리스 APK
 
-## No USB Cable Flow
-
-1. Send `app/build/outputs/apk/debug/app-debug.apk` to the phone.
-2. Install it after enabling "install unknown apps" for the app used to open the APK.
-3. Send `models/legacy/embeddinggemma-300m.tflite` to the phone, usually into Downloads.
-4. Open HJP, press `임베딩 가져오기`, and select `embeddinggemma-300m.tflite`.
-5. Press `모델 상태 다시 확인`.
-6. If you have FunctionGemma, send `functiongemma_270m.litertlm`, press `Tool LLM 가져오기`, and select it.
-7. If you have Gemma 4 E2B IT, send `gemma-4-E2B-it.litertlm`, press `Chat LLM 가져오기`, and select it.
-
-Embedding search intentionally has no fallback. If Diagnostics does not show `active_embedding_model_backed: true`, search will return an error.
+`./gradlew :app:assembleRelease` 는 **서명되지 않은** APK(284MB)를 만든다. 기기에 설치하려면
+키스토어를 만들어 `signingConfigs` 를 붙여야 한다. 지금은 설정돼 있지 않다 — 테스트는 디버그
+APK(394MB, x86_64 포함)로 한다.

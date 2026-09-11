@@ -258,7 +258,7 @@ fun runChat(
         val search = runCatching { searchService.searchHybrid(question, 5) }.getOrNull()
         return ChatResult(
             answer = if (search?.abstained == true) NO_MATCH_PHRASE
-            else "LLM 모델이 없어 검색 결과만 보여드려요. 모델 탭에서 LLM 파일을 가져오면 답변도 생성됩니다.",
+            else "LLM 모델이 없어 검색 결과만 보여드려요. 설정 > 모델 파일 관리에서 LLM 파일을 가져오면 답변도 생성됩니다.",
             search = search,
         )
     }
