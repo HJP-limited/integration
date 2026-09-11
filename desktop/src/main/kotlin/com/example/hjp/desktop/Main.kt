@@ -96,11 +96,24 @@ fun main(args: Array<String>) {
     }
 }
 
+/**
+ * EmbeddingGemma ONNX 위치. 없으면 임베더 없이(키워드 전용) 돈다 — 1.2GB 라 저장소에
+ * 넣지 않으므로 기계마다 없을 수 있고, 그때 죽는 것보다 폴백이 낫다.
+ */
+private val EMBED_MODEL_DIR: File by lazy {
+    val fromEnv = System.getenv("HJP_EMBED_MODEL_DIR")
+    if (fromEnv != null) File(fromEnv)
+    else File(repoRoot.parentFile, "HJP_limitededition-main/models/embeddinggemma-300m-onnx")
+}
+
 private fun openSearch(): CardSearchService {
     File(DEFAULT_DB).parentFile?.mkdirs()
     return CardSearchService(
         store = SqliteCardStore(DEFAULT_DB),
-        embeddingProviderFactory = { NoEmbeddingProvider },
+        embeddingProviderFactory = {
+            if (EMBED_MODEL_DIR.isDirectory) OnnxEmbeddingProvider(EMBED_MODEL_DIR)
+            else NoEmbeddingProvider
+        },
         seedSource = FileSeedSource(File(DEFAULT_SEED_DIR)),
     )
 }
@@ -173,6 +186,7 @@ private fun runSearch(args: List<String>) {
     openSearch().use { search ->
         val response = search.search(query, limit = 5)
         println("질의: $query")
+        println("임베더: ${search.diagnostics().optString("active_embedding_status")}")
         println("경로: ${response.retrieval}${if (response.abstained) " · 기권" else ""}")
         println("필터: ${response.fieldFilters}")
         println("-".repeat(60))

@@ -33,6 +33,10 @@ dependencies {
     // Room 이 안드로이드에서 돌리는 것과 **같은 SQLite 엔진**. FTS4 MATCH 의미를 코드로
     // 흉내 내지 않고 같은 SQL 을 그대로 실행해야 노트북 지표가 앱을 대변한다.
     implementation("org.xerial:sqlite-jdbc:3.50.3.0")
+
+    // EmbeddingGemma 의 Gemma 토크나이저. tokenizer.json 을 그대로 읽는 구현이라
+    // 토크나이즈 규칙을 코틀린으로 옮겨 적지 않아도 된다(옮기면 갈라진다).
+    implementation("ai.djl.huggingface:tokenizers:0.30.0")
 }
 
 application {
