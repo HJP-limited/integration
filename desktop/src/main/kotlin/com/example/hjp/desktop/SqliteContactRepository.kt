@@ -331,7 +331,10 @@ class SqliteContactRepository(dbPath: String) :
 internal fun BusinessCardRecord.searchableText(): String = buildString {
     append(
         listOf(
-            name, nameEn, company, title, department, industry, location, memo,
+            name, nameEn, company, title, department, industry, location,
+            // 앱과 같은 칸. address·email 이 빠지면 "판교" 같은 주소 안의 낱말이
+            // 키워드로 잡히지 않는다.
+            address, email, memo,
             tags.joinToString(" "), phone, mobile,
         ).joinToString(" "),
     )

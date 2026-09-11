@@ -387,8 +387,8 @@ class MultiturnScenarioHarness(
 
         private fun searchableText(card: BusinessCardRecord): String = listOf(
             card.name, card.nameEn, card.company, card.title, card.department,
-            card.industry, card.location, card.memo, card.tags.joinToString(" "),
-            card.phone, card.mobile,
+            card.industry, card.location, card.address, card.email, card.memo,
+            card.tags.joinToString(" "), card.phone, card.mobile,
         ).joinToString(" ").lowercase()
 
         override suspend fun update(

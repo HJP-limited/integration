@@ -22,6 +22,10 @@ import com.hjp.agent.core.DefaultToolRegistry
 import com.hjp.agent.core.InMemoryAgentSessionStore
 import com.hjp.agent.core.ModelContextSelector
 import com.hjp.agent.core.ToolImplementationCandidate
+import com.hjp.tool.contract.ToolExecutionResult
+import com.hjp.tool.contract.ToolCatalogSnapshot
+import com.hjp.agent.contract.ModelToolCall
+import com.hjp.agent.core.ToolExecutor
 import com.hjp.searchlookup.OnDeviceEmbeddingEngine
 import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.ContactSearchBackend
@@ -98,6 +102,28 @@ private class DesktopRuntimeEnvironment(
  * 그래서 이 러너로 검증되는 것은 **도구 연쇄·검색·세션**이고, 모델이 문장을 어떻게 쓰는지는
  * 아니다.
  */
+/**
+ * 어떤 도구가 실제로 실행됐는지 **이름으로** 기록한다.
+ *
+ * 화면에 흘러나오는 사건([AgentEvent.ToolStarted])은 사람이 읽을 한글 문구라, "언제
+ * search_contacts 를 부르는가" 같은 질문에 답하려면 도구 이름이 필요하다. 위임만 하고
+ * 결과는 바꾸지 않는다.
+ */
+private class RecordingToolExecutor(private val delegate: ToolExecutor) : ToolExecutor {
+    val calls = mutableListOf<String>()
+
+    fun clear() = calls.clear()
+
+    override suspend fun execute(
+        call: ModelToolCall,
+        snapshot: ToolCatalogSnapshot,
+        context: ToolExecutionContext,
+    ): ToolExecutionResult {
+        calls += call.modelToolName
+        return delegate.execute(call, snapshot, context)
+    }
+}
+
 private class DesktopAgent(
     dbPath: String,
     embedModelDir: File,
@@ -127,6 +153,7 @@ private class DesktopAgent(
         GetCurrentDateTimePlugin(),
     )
     private val registry = DefaultToolRegistry(plugins.map { ToolImplementationCandidate(it) })
+    val executor = RecordingToolExecutor(DefaultToolExecutor(registry))
     private val sessionStore = InMemoryAgentSessionStore()
     private val sessionManager = AgentSessionManager(
         sessionStore,
@@ -137,7 +164,7 @@ private class DesktopAgent(
 
     val kernel = AgentKernel(
         registry = registry,
-        toolExecutor = DefaultToolExecutor(registry),
+        toolExecutor = executor,
         policyEngine = DefaultToolPolicyEngine(),
         sessionManager = sessionManager,
         observationMapper = DefaultToolObservationMapper(),
@@ -398,11 +425,10 @@ private fun runTurns(args: List<String>) = runBlocking {
         questions.forEachIndexed { index, question ->
             val startedAt = System.currentTimeMillis()
             val answer = StringBuilder()
-            val tools = mutableListOf<String>()
+            agent.executor.clear()
             var failure: String? = null
             agent.kernel.runTurn(question).collect { event ->
                 when (event) {
-                    is AgentEvent.ToolStarted -> tools += event.messageKo
                     is AgentEvent.Token -> answer.append(event.text)
                     is AgentEvent.FinalMessage -> if (answer.isBlank()) answer.append(event.text)
                     is AgentEvent.UserError -> failure = event.messageKo
@@ -411,7 +437,8 @@ private fun runTurns(args: List<String>) = runBlocking {
             }
             val elapsed = System.currentTimeMillis() - startedAt
             println("[t${index + 1}] $question")
-            if (tools.isNotEmpty()) println("      도구: ${tools.joinToString(" → ")}")
+            val tools = agent.executor.calls.toList()
+            println("      도구: " + if (tools.isEmpty()) "(없음)" else tools.joinToString(" → "))
             println("      ${elapsed}ms")
             println("      답변: ${(failure ?: answer.toString()).replace('\n', ' ').take(160)}")
             println()

@@ -90,6 +90,11 @@ private fun BusinessCardEntity.toFtsEntity(rowId: Int): BusinessCardFtsEntity =
                     department,
                     industry,
                     location,
+                    // 주소·이메일이 빠져 있었다. "판교"는 location("경기도 성남시 분당구")이
+                    // 아니라 address 에만 있어서, 판교 명함 9장이 키워드로 한 건도 안 잡히고
+                    // 의미검색만 남아 엉뚱한 지역이 나왔다(실측). 이메일도 같은 이유로 넣는다.
+                    address,
+                    email,
                     memo,
                     tagsJson,
                     phone,
