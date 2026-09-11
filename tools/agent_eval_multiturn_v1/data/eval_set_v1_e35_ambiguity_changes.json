@@ -1,0 +1,549 @@
+{
+  "source": "eval_set_v1_e34.json",
+  "source_sha256": "159a6f3b8c734cecd6da9af34e744d0d6b49099e11404759c5d37c11a05639dc",
+  "output": "eval_set_v1_e35.json",
+  "output_sha256": "d252b1342e2b914281abf44f02f017b38694a52a78042f6cd80aba96b106da6f",
+  "change_count": 20,
+  "changes": [
+    {
+      "scenario_id": "DEV-0083",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S01194"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "DEV-0087",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03568"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "DEV-0099",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03892"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "DEV-0099",
+      "turn": 6,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03892"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "DEV-0115",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03683"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "REG-0015",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03947"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "REG-0047",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S02779"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "REG-0053",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S02369"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0017",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S01523"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0025",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S04357"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0033",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S01009"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0099",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03072"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0105",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S00703"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0123",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03494"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0165",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S00261"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0167",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03823"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0167",
+      "turn": 6,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S03823"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0189",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S02725"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0189",
+      "turn": 6,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S02725"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    },
+    {
+      "scenario_id": "HLD-0195",
+      "turn": 5,
+      "candidate_count": 5,
+      "old_expected_calls": [
+        {
+          "args": {
+            "card_id": {
+              "cmp": "exact",
+              "value": "S01548"
+            },
+            "purpose": {
+              "cmp": "exact_one_of",
+              "value": [
+                "display",
+                "email",
+                "sms",
+                "calendar"
+              ]
+            }
+          },
+          "tool": "get_contact"
+        }
+      ],
+      "new_expected_calls": [],
+      "reason": "2+ candidates and no explicit ordinal/name/card selection"
+    }
+  ]
+}

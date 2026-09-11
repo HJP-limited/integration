@@ -27,3 +27,14 @@ include(":app")
 include(":core")
 include(":core-ocr")
 include(":desktop")
+
+// Agent_0910 (HJP_dataset_gen_by_v1) 의 에이전트/도구 계층. 도구 호출 루프와 턴 라우팅이
+// 여기 있다 — 검색만 직접 부르던 기존 runChat 을 이쪽이 대체한다.
+include(":agent-contract")
+include(":tool-contract")
+include(":agent-core")
+include(":search-core")
+include(":tool-contact")
+include(":tool-android-intents")
+include(":tool-datetime")
+include(":llm-litert")

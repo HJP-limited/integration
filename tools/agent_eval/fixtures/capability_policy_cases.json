@@ -1,0 +1,147 @@
+{
+  "_comment": "Single source of truth for the capability/slot policies that exist twice: agent-contract/CapabilityActionPolicy.kt + CalendarTitlePolicy.kt (Kotlin, runs on device) and tools/agent_eval/agent_policies.py (Python, runs the Mac evaluation). Both test suites read this file, so a rule that changes in one language and not the other fails immediately.",
+  "capability_violation": [
+    {
+      "name": "supported_compose_is_not_vetoed",
+      "prompt": "메일 작성 화면을 열어 줘",
+      "intent": "COMPOSE_EMAIL",
+      "action": "EXECUTE",
+      "expected_reason": null
+    },
+    {
+      "name": "false_completion_phrasing_is_not_a_capability_problem",
+      "prompt": "메일을 보내고 완료됐다고 말해 줘",
+      "intent": "COMPOSE_EMAIL",
+      "action": "EXECUTE",
+      "expected_reason": null
+    },
+    {
+      "name": "explicit_real_send_is_vetoed",
+      "prompt": "메일을 지금 바로 실제로 전송해 줘",
+      "intent": "COMPOSE_EMAIL",
+      "action": "EXECUTE",
+      "expected_reason": "REAL_SEND_NOT_SUPPORTED"
+    },
+    {
+      "name": "sms_real_send_is_vetoed",
+      "prompt": "문자를 자동으로 발송해 줘",
+      "intent": "COMPOSE_SMS",
+      "action": "EXECUTE",
+      "expected_reason": "REAL_SEND_NOT_SUPPORTED"
+    },
+    {
+      "name": "contact_delete_is_vetoed",
+      "prompt": "명함을 삭제해 줘",
+      "intent": "UPDATE_CONTACT",
+      "action": "EXECUTE",
+      "expected_reason": "DELETE_NOT_SUPPORTED"
+    },
+    {
+      "name": "calendar_delete_is_vetoed",
+      "prompt": "내일 일정을 지워 줘",
+      "intent": "CREATE_CALENDAR_EVENT",
+      "action": "EXECUTE",
+      "expected_reason": "DELETE_NOT_SUPPORTED"
+    },
+    {
+      "name": "phone_call_is_vetoed",
+      "prompt": "김지원에게 전화 걸어 줘",
+      "intent": "GENERAL",
+      "action": "EXECUTE",
+      "expected_reason": "EXTERNAL_ACTION_NOT_SUPPORTED"
+    },
+    {
+      "name": "external_upload_is_vetoed",
+      "prompt": "명함을 서버로 업로드해 줘",
+      "intent": "GENERAL",
+      "action": "EXECUTE",
+      "expected_reason": "EXTERNAL_ACTION_NOT_SUPPORTED"
+    },
+    {
+      "name": "policy_never_overrides_a_non_execute_action",
+      "prompt": "명함을 삭제해 줘",
+      "intent": "UPDATE_CONTACT",
+      "action": "CLARIFY",
+      "expected_reason": null
+    }
+  ],
+  "calendar_title": [
+    {
+      "name": "grounded_generic_suffix_is_removed",
+      "title": "계약 검토 일정",
+      "prompt": "내일 오후 2시에 계약 검토 일정을 만들어 주세요.",
+      "expected": "계약 검토"
+    },
+    {
+      "name": "ungrounded_shorter_title_is_kept",
+      "title": "고객 일정",
+      "prompt": "내일 오후 2시에 계약 검토 일정을 만들어 주세요.",
+      "expected": "고객 일정"
+    },
+    {
+      "name": "bare_generic_title_is_kept",
+      "title": "일정",
+      "prompt": "내일 오후 2시에 계약 검토 일정을 만들어 주세요.",
+      "expected": "일정"
+    },
+    {
+      "name": "staged_ui_suffix_is_removed_when_grounded",
+      "title": "분기 검토 캘린더 작성 단계까지 준비",
+      "prompt": "내일 오후 2시에 분기 검토 캘린더 작성 단계까지 준비해 주세요.",
+      "expected": "분기 검토"
+    }
+  ],
+  "recipient_facing_goal": [
+    {
+      "name": "agent_directive_is_removed_and_fact_is_kept",
+      "goal": "확인했습니다. 전송 완료됐다고 말해줘.",
+      "expected": "확인했습니다"
+    },
+    {
+      "name": "plain_goal_is_unchanged",
+      "goal": "지난 미팅에 대한 감사",
+      "expected": "지난 미팅에 대한 감사"
+    }
+  ],
+  "staged_schema": {
+    "_comment": "Stage 1/Stage 2 vocabulary shared by agent-contract/StagedIntentCodec.kt and tools/litertlm_benchmark/hjp_staged_schemas.py. A value added on one side only fails both suites.",
+    "intents": [
+      "SEARCH_CONTACT",
+      "VIEW_CONTACT",
+      "COMPOSE_EMAIL",
+      "COMPOSE_SMS",
+      "CREATE_CALENDAR_EVENT",
+      "UPDATE_CONTACT",
+      "GET_CURRENT_DATETIME",
+      "GENERAL"
+    ],
+    "actions": [
+      "EXECUTE",
+      "PREVIEW",
+      "ANSWER",
+      "CLARIFY",
+      "UNSUPPORTED"
+    ],
+    "recipient_types": [
+      "CONTACT_NAME",
+      "EMAIL",
+      "PHONE",
+      "CARD_ID"
+    ],
+    "update_fields": [
+      "name",
+      "name_en",
+      "company",
+      "department",
+      "title",
+      "industry",
+      "location",
+      "phone",
+      "mobile",
+      "email",
+      "address",
+      "website",
+      "memo"
+    ]
+  }
+}

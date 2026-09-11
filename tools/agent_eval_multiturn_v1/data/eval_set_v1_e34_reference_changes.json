@@ -1,0 +1,475 @@
+{
+  "source": "tools/agent_eval_multiturn_v1/data/eval_set_v1_e33.json",
+  "changes": [
+    {
+      "scenario_id": "DEV-0022",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S01711"
+      }
+    },
+    {
+      "scenario_id": "DEV-0023",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S01448"
+      }
+    },
+    {
+      "scenario_id": "DEV-0038",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S01448"
+      }
+    },
+    {
+      "scenario_id": "DEV-0040",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S00516"
+      }
+    },
+    {
+      "scenario_id": "DEV-0040",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S00516"
+      }
+    },
+    {
+      "scenario_id": "DEV-0066",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "T045"
+      }
+    },
+    {
+      "scenario_id": "DEV-0066",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "T045"
+      }
+    },
+    {
+      "scenario_id": "DEV-0072",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S04616"
+      }
+    },
+    {
+      "scenario_id": "DEV-0101",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S00430"
+      }
+    },
+    {
+      "scenario_id": "REG-0005",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "T043"
+      }
+    },
+    {
+      "scenario_id": "REG-0005",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "T043"
+      }
+    },
+    {
+      "scenario_id": "REG-0027",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04106"
+      }
+    },
+    {
+      "scenario_id": "REG-0046",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S03197"
+      }
+    },
+    {
+      "scenario_id": "REG-0046",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S03197"
+      }
+    },
+    {
+      "scenario_id": "REG-0046",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S03197"
+      }
+    },
+    {
+      "scenario_id": "REG-0055",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04548"
+      }
+    },
+    {
+      "scenario_id": "REG-0055",
+      "turn": 7,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04548"
+      }
+    },
+    {
+      "scenario_id": "REG-0055",
+      "turn": 8,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04548"
+      }
+    },
+    {
+      "scenario_id": "REG-0055",
+      "turn": 9,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04548"
+      }
+    },
+    {
+      "scenario_id": "REG-0077",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "T043"
+      }
+    },
+    {
+      "scenario_id": "REG-0077",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "T043"
+      }
+    },
+    {
+      "scenario_id": "HLD-0006",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03261"
+      }
+    },
+    {
+      "scenario_id": "HLD-0027",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S03256"
+      }
+    },
+    {
+      "scenario_id": "HLD-0028",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S03200"
+      }
+    },
+    {
+      "scenario_id": "HLD-0047",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S02151"
+      }
+    },
+    {
+      "scenario_id": "HLD-0054",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03261"
+      }
+    },
+    {
+      "scenario_id": "HLD-0054",
+      "turn": 8,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03261"
+      }
+    },
+    {
+      "scenario_id": "HLD-0058",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03813"
+      }
+    },
+    {
+      "scenario_id": "HLD-0058",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03813"
+      }
+    },
+    {
+      "scenario_id": "HLD-0058",
+      "turn": 7,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03813"
+      }
+    },
+    {
+      "scenario_id": "HLD-0068",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S04295"
+      }
+    },
+    {
+      "scenario_id": "HLD-0068",
+      "turn": 8,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S04295"
+      }
+    },
+    {
+      "scenario_id": "HLD-0119",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04334"
+      }
+    },
+    {
+      "scenario_id": "HLD-0122",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04236"
+      }
+    },
+    {
+      "scenario_id": "HLD-0132",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03261"
+      }
+    },
+    {
+      "scenario_id": "HLD-0146",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S04295"
+      }
+    },
+    {
+      "scenario_id": "HLD-0162",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S03940"
+      }
+    },
+    {
+      "scenario_id": "HLD-0166",
+      "turn": 6,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "T031"
+      }
+    },
+    {
+      "scenario_id": "HLD-0166",
+      "turn": 7,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "T031"
+      }
+    },
+    {
+      "scenario_id": "HLD-0166",
+      "turn": 8,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "T031"
+      }
+    },
+    {
+      "scenario_id": "HLD-0168",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04007"
+      }
+    },
+    {
+      "scenario_id": "HLD-0168",
+      "turn": 7,
+      "tool": "get_contact",
+      "position": 1,
+      "old": {
+        "cmp": "exact",
+        "value": "S04007"
+      }
+    },
+    {
+      "scenario_id": "HLD-0196",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03813"
+      }
+    },
+    {
+      "scenario_id": "HLD-0196",
+      "turn": 7,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03813"
+      }
+    },
+    {
+      "scenario_id": "HLD-0196",
+      "turn": 8,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03813"
+      }
+    },
+    {
+      "scenario_id": "HLD-0198",
+      "turn": 4,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03261"
+      }
+    },
+    {
+      "scenario_id": "HLD-0198",
+      "turn": 5,
+      "tool": "get_contact",
+      "position": 2,
+      "old": {
+        "cmp": "exact",
+        "value": "S03261"
+      }
+    }
+  ]
+}

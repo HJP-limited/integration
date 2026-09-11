@@ -4,6 +4,9 @@
 /.idea/
 .DS_Store
 /build
+# 모든 모듈의 빌드 산출물. 예전에는 /build 하나뿐이라 Agent_0910 모듈들이 들어오자
+# build/ 가 통째로 스테이징됐다(테스트 클래스 파일명이 Windows 경로 한계를 넘어 add 가 죽었다).
+build/
 /captures
 .externalNativeBuild
 .cxx
