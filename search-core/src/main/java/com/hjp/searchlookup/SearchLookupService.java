@@ -89,6 +89,14 @@ public final class SearchLookupService implements RetrievalService {
         // The two reported candidate counts stay pre-constraint on purpose — they say what the
         // retrievers found, and the result list says what survived.
         SearchFieldConstraintPlan plan = fieldConstraints.resolve(analysis);
+        // A bare name the roll does not carry becomes an abstention only when the keyword side also
+        // found nothing. The resolver cannot decide this: it sees the word, not what the index did
+        // with it. A three-syllable word starting with a known surname is often an ordinary word,
+        // and if the index matched something then it is one — the name reading was wrong, and
+        // abstaining would hide real answers.
+        if (plan.bareNameAbsent && keyword.isEmpty()) {
+            plan = plan.abstaining("NO_CARD_WITH_REQUESTED_NAME");
+        }
         int keywordCandidates = keyword.size();
         int semanticCandidates = semantic.size();
         keyword = SearchFieldConstraintMatcher.apply(keyword, plan);

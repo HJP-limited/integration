@@ -51,13 +51,40 @@ final class SearchFieldVocabulary {
     /** One normalised {@code location + address} string per card, for existence checks. */
     private final List<String> locationHaystacks;
 
+    /** Every name a card carries, normalised. The evidence for "this person exists in the data". */
+    final Set<String> personNames;
+
+    /** First syllables of the names in the data. A name is built from parts the data already uses. */
+    final Set<String> surnames;
+
+    /** Everything after the first syllable of the names in the data. */
+    final Set<String> givenNames;
+
     private SearchFieldVocabulary(Set<String> administrativeLocations, Set<String> locationTerms,
-            Set<String> titleTerms, Set<String> nonLocationTerms, List<String> locationHaystacks) {
+            Set<String> titleTerms, Set<String> nonLocationTerms, List<String> locationHaystacks,
+            Set<String> personNames, Set<String> surnames, Set<String> givenNames) {
         this.administrativeLocations = Collections.unmodifiableSet(administrativeLocations);
         this.locationTerms = Collections.unmodifiableSet(locationTerms);
         this.titleTerms = Collections.unmodifiableSet(titleTerms);
         this.nonLocationTerms = Collections.unmodifiableSet(nonLocationTerms);
         this.locationHaystacks = Collections.unmodifiableList(locationHaystacks);
+        this.personNames = Collections.unmodifiableSet(personNames);
+        this.surnames = Collections.unmodifiableSet(surnames);
+        this.givenNames = Collections.unmodifiableSet(givenNames);
+    }
+
+    /**
+     * Is anybody in this repository actually called this?
+     *
+     * Containment, not equality: a stored name may carry a middle segment or an English form, and
+     * the question "정하은 명함" is about the person whose name contains 정하은.
+     */
+    boolean someoneIsNamed(String nameTerm) {
+        if (nameTerm == null || nameTerm.isEmpty()) return false;
+        for (String name : personNames) {
+            if (name.equals(nameTerm) || name.contains(nameTerm)) return true;
+        }
+        return false;
     }
 
     static String normalize(String raw) {
@@ -80,6 +107,7 @@ final class SearchFieldVocabulary {
         Set<String> titles = new LinkedHashSet<>();
         Set<String> nonLocations = new LinkedHashSet<>();
         List<String> haystacks = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
 
         for (BusinessCard card : cards) {
             if (card == null) continue;
@@ -111,6 +139,8 @@ final class SearchFieldVocabulary {
                 titles.add(word);
                 nonLocations.add(word);
             }
+            String personName = normalize(card.name);
+            if (!personName.isEmpty()) names.add(personName);
             for (String word : words(card.name)) nonLocations.add(word);
             for (String word : words(card.nameEn)) nonLocations.add(word);
             for (String word : words(card.company)) nonLocations.add(word);
@@ -119,7 +149,19 @@ final class SearchFieldVocabulary {
         }
         // A word the cards use as a place stays a place, even if some company name repeats it.
         nonLocations.removeAll(locations);
-        return new SearchFieldVocabulary(administrative, locations, titles, nonLocations, haystacks);
+        // A name is read as "a surname the data uses + a given name the data uses". Splitting after
+        // the first syllable is what Korean names allow; it is deliberately not a name list, because
+        // the case that has to abstain is exactly the name that is *not* in the list.
+        Set<String> surnames = new LinkedHashSet<>();
+        Set<String> givenNames = new LinkedHashSet<>();
+        for (String name : names) {
+            if (name.length() >= 2) {
+                surnames.add(name.substring(0, 1));
+                givenNames.add(name.substring(1));
+            }
+        }
+        return new SearchFieldVocabulary(administrative, locations, titles, nonLocations, haystacks,
+                names, surnames, givenNames);
     }
 
     /**

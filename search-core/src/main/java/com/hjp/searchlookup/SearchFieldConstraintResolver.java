@@ -62,6 +62,9 @@ final class SearchFieldConstraintResolver {
         "에서", "에 있는", "에있는", "근무", "일하는", "계신", "소재", "지사", "근처",
     };
 
+    /** Words that mark the token before them as a person. */
+    static final String[] NAME_HONORIFICS = { "씨", "님", "군", "양" };
+
     private final BusinessCardRepository repository;
 
     private volatile SearchFieldVocabulary cachedVocabulary;
@@ -80,6 +83,9 @@ final class SearchFieldConstraintResolver {
         boolean roleMarked = hasLocationRole(analysis.normalizedQuery);
         List<String> locations = new ArrayList<>();
         List<String> titles = new ArrayList<>();
+        boolean namedRealPerson = false;
+        boolean namedAbsentPersonWithHonorific = false;
+        boolean namedAbsentBareName = false;
 
         for (String rawToken : analysis.tokens) {
             String token = SearchFieldVocabulary.normalize(rawToken);
@@ -89,21 +95,111 @@ final class SearchFieldConstraintResolver {
                 addDistinct(titles, token);
                 continue;
             }
+            // Place before person. 군 is an honorific and also the suffix of 가평군·음성군·울주군,
+            // so reading the name first turns "가평군 디자이너" into a question about somebody
+            // called 가평 and abstains on a question that is about a district.
             if (namesAPlace(token, vocabulary, roleMarked)) {
                 addDistinct(locations, token);
+                continue;
+            }
+            NameReading name = readName(token, vocabulary);
+            if (name != NameReading.NOT_A_NAME) {
+                if (vocabulary.someoneIsNamed(personNameStem(token))) {
+                    namedRealPerson = true;
+                } else if (name == NameReading.HONORIFIC) {
+                    namedAbsentPersonWithHonorific = true;
+                } else {
+                    namedAbsentBareName = true;
+                }
             }
         }
-        if (locations.isEmpty() && titles.isEmpty()) return SearchFieldConstraintPlan.NONE;
 
         boolean known = false;
         for (String location : locations) {
             if (vocabulary.someoneWorksIn(location)) { known = true; break; }
         }
         String abstainReason = "";
-        if (!locations.isEmpty() && !known) {
+        // An honorific settles it: 씨/님/군/양 point at a person, so a name nobody carries is an
+        // answer of nobody — whatever else the sentence mentions.
+        if (namedAbsentPersonWithHonorific) {
+            abstainReason = "NO_CARD_WITH_REQUESTED_NAME";
+        } else if (!locations.isEmpty() && !known && !namedRealPerson) {
+            // A query that already named somebody real is not abstained on a stray token's place
+            // reading. The analyzer keeps particles attached, so 이메일도 and 회사도 both end in 도
+            // and read as provinces; "두미영 회사와 이메일도 알려줘" abstained because of it, while
+            // the same sentence without 도 worked. A sentence that only asks about a place nobody
+            // works in still abstains, because it names nobody.
             abstainReason = "NO_CARD_IN_REQUESTED_LOCATION";
         }
-        return SearchFieldConstraintPlan.of(locations, titles, known, abstainReason);
+        // A bare name resolves to nobody only when the retrievers also found nothing — settled by
+        // SearchLookupService, which is the first place that knows.
+        boolean bareNameAbsent = namedAbsentBareName && !namedRealPerson && abstainReason.isEmpty();
+
+        if (locations.isEmpty() && titles.isEmpty() && abstainReason.isEmpty() && !bareNameAbsent) {
+            return SearchFieldConstraintPlan.NONE;
+        }
+        return SearchFieldConstraintPlan.of(locations, titles, known, abstainReason, bareNameAbsent);
+    }
+
+    /** How confidently a token points at a person. */
+    private enum NameReading { NOT_A_NAME, BARE, HONORIFIC }
+
+    /**
+     * Reads a token as somebody's name, or decides it is not one.
+     *
+     * Two routes, and only two:
+     *
+     * <ol>
+     *   <li>an honorific is attached (정하은씨) — the honorific itself is the evidence;</li>
+     *   <li>three bare syllables (정하은) assembled from a surname the data uses and a given name
+     *       the data uses. "Built from parts we know, but absent from the roll."</li>
+     * </ol>
+     *
+     * <p>Widening route 2 to "any three syllables starting with a known surname" was measured and
+     * reverted: 서커스·조련사·조종사·임원급·공무원 all read as names and conceptual Recall@5 fell
+     * 0.660 → 0.630. The name test had quietly become an unknown-word test.
+     *
+     * <p>A token the data already uses as a place, a job, an employer or a department is not a
+     * name. That check is needed on the honorific route too: 군 is an honorific and also the suffix
+     * of 음성군·평창군·울주군, so "충청북도 음성군에 있는 프로덕트매니저 찾아줘" abstained on a
+     * question that had answers.
+     */
+    private NameReading readName(String token, SearchFieldVocabulary vocabulary) {
+        if (!isAllHangul(token)) return NameReading.NOT_A_NAME;
+        if (vocabulary.locationTerms.contains(token) || vocabulary.titleTerms.contains(token)) {
+            return NameReading.NOT_A_NAME;
+        }
+        if (token.length() >= 3 && token.length() <= 5) {
+            for (String honorific : NAME_HONORIFICS) {
+                if (token.endsWith(honorific) && token.length() - honorific.length() >= 2) {
+                    return NameReading.HONORIFIC;
+                }
+            }
+        }
+        if (token.length() == 3
+                && vocabulary.surnames.contains(token.substring(0, 1))
+                && vocabulary.givenNames.contains(token.substring(1))) {
+            return NameReading.BARE;
+        }
+        return NameReading.NOT_A_NAME;
+    }
+
+    /** The name without its honorific, which is what the roll is checked against. */
+    static String personNameStem(String token) {
+        for (String honorific : NAME_HONORIFICS) {
+            if (token.endsWith(honorific) && token.length() - honorific.length() >= 2) {
+                return token.substring(0, token.length() - honorific.length());
+            }
+        }
+        return token;
+    }
+
+    private static boolean isAllHangul(String token) {
+        for (int i = 0; i < token.length(); i++) {
+            char c = token.charAt(i);
+            if (c < '가' || c > '힣') return false;
+        }
+        return !token.isEmpty();
     }
 
     /** Exposed for tests in this package; production callers go through {@link #resolve}. */

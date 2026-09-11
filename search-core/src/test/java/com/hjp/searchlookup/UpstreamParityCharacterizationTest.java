@@ -94,23 +94,25 @@ public class UpstreamParityCharacterizationTest {
     }
 
     @Test
-    public void an_unknown_place_without_a_role_marker_is_not_read_as_a_location_here() {
-        // A deliberate difference from upstream, recorded rather than "fixed".
+    public void an_unknown_place_with_a_role_marker_now_abstains_like_upstream() {
+        // This test used to record the opposite, and the difference was never a decision.
         //
-        // Upstream reads a 도-final token as a province on shape alone, which is why it needed the
-        // named-person guard. This port only applies the 도 rule when the query also carries a
-        // location role marker, so "울릉도 근무자 찾아줘" never becomes a location filter and never
-        // reaches the abstention branch at all.
+        // "울릉도 근무자 찾아줘" carries a role marker (근무), so the 도 rule applies and the
+        // token should have been read as a province. It was not, because the analyzer stripped 도
+        // as a grammatical particle and left "울릉" — a word with no suffix and no place-hood. The
+        // filter never saw 울릉도 at all, and the test recorded that accident as a contract.
         //
-        // The abstention contract on this side is pinned by the sealed search run_3 (20/20), so it
-        // is not moved to match upstream's shape. What matters is that both sides refuse to abstain
-        // on the query above — see the previous test — and they get there by different routes.
+        // The analyzer now keeps the original token beside the stripped stem, which is what
+        // upstream always did ("조사를 떼도 원본을 함께 남긴다"). The reason it had to change is
+        // names: 정하은 lost its 은 the same way and became 정하, so the person could not be found
+        // and 정하-something else came back instead. With the original kept, this query reaches the
+        // branch it was always meant to reach and abstains — the upstream behaviour, and the one
+        // the product wants: nobody works on 울릉도, so the answer is nobody.
         SearchFieldConstraintResolver resolver =
                 new SearchFieldConstraintResolver(new InMemoryBusinessCardRepository(CARDS));
         SearchFieldConstraintPlan plan = resolver.resolve(ANALYZER.analyze("울릉도 근무자 찾아줘"));
-        assertEquals("no location was extracted, so there is nothing to abstain over",
-                "", plan.abstainReason);
-        assertTrue("and no location filter was applied: " + plan, plan.locations.isEmpty());
+        assertEquals("nobody works there, so the answer is already known: " + plan,
+                "NO_CARD_IN_REQUESTED_LOCATION", plan.abstainReason);
     }
 
     @Test

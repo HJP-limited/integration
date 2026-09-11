@@ -55,7 +55,12 @@ public final class QueryAnalyzer {
             if (t.isEmpty() || STOP_WORDS.contains(t)) continue;
             String stem = stripKoreanSuffixRepeatedly(t);
             if (!STOP_WORDS.contains(stem)) addDistinct(out, stem);
-            if (stem.equals(t)) addDistinct(out, t);
+            // 조사를 떼도 **원본을 버리지 않는다.** 우리 형태소 처리는 손으로 적은 조사 목록이라
+            // 잘못 떼는 일이 있고, 원본이 사라지면 그 말이 통째로 검색에서 없어진다.
+            // 실측: "정하은"이 은을 조사로 보고 "정하"만 남아 정하은은 못 찾고 정하로 시작하는
+            // 다른 사람이 나왔다. 이름이 조사 모양 음절(은·는·이·가·도…)로 끝나면 전부 같은 일이
+            // 벌어진다. 오려낸 조각이 **추가될 뿐** 원본을 잃지 않게 한다.
+            if (!STOP_WORDS.contains(t)) addDistinct(out, t);
             String digits = t.replaceAll("[^0-9]", "");
             if (digits.length() >= 3) addDistinct(out, digits);
         }

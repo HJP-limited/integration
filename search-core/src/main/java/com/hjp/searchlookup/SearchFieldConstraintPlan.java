@@ -23,7 +23,7 @@ final class SearchFieldConstraintPlan {
     /** The plan for a query that constrained nothing — the overwhelming majority of them. */
     static final SearchFieldConstraintPlan NONE =
             new SearchFieldConstraintPlan(Collections.<String>emptyList(),
-                    Collections.<String>emptyList(), false, false, "");
+                    Collections.<String>emptyList(), false, false, "", false);
 
     /** Locations named in the query, already normalised. Alternatives, not requirements. */
     final List<String> locations;
@@ -47,20 +47,49 @@ final class SearchFieldConstraintPlan {
     /** Empty unless the plan already knows the answer is nobody. */
     final String abstainReason;
 
+    /**
+     * The query named somebody with no honorific, spelled out of parts the data uses, and nobody
+     * is called that.
+     *
+     * Not an abstention on its own. A bare three-syllable word that happens to start with a
+     * surname can be an ordinary noun — 조련사, 조종사, 임원급 all do — so the decision needs one
+     * more fact the resolver cannot see: whether the keyword retriever found anything at all. If
+     * it did, the word is a real word in this data and the name reading was wrong.
+     * {@link SearchLookupService} settles it.
+     */
+    final boolean bareNameAbsent;
+
     private SearchFieldConstraintPlan(List<String> locations, List<String> titles,
-            boolean locationRequested, boolean locationKnownToRepository, String abstainReason) {
+            boolean locationRequested, boolean locationKnownToRepository, String abstainReason,
+            boolean bareNameAbsent) {
         this.locations = Collections.unmodifiableList(new ArrayList<>(locations));
         this.titles = Collections.unmodifiableList(new ArrayList<>(titles));
         this.locationRequested = locationRequested;
         this.locationKnownToRepository = locationKnownToRepository;
         this.abstainReason = abstainReason == null ? "" : abstainReason;
+        this.bareNameAbsent = bareNameAbsent;
     }
 
     static SearchFieldConstraintPlan of(List<String> locations, List<String> titles,
             boolean locationKnownToRepository, String abstainReason) {
-        if (locations.isEmpty() && titles.isEmpty()) return NONE;
+        return of(locations, titles, locationKnownToRepository, abstainReason, false);
+    }
+
+    static SearchFieldConstraintPlan of(List<String> locations, List<String> titles,
+            boolean locationKnownToRepository, String abstainReason, boolean bareNameAbsent) {
+        if (locations.isEmpty() && titles.isEmpty() && (abstainReason == null || abstainReason.isEmpty())
+                && !bareNameAbsent) {
+            return NONE;
+        }
         return new SearchFieldConstraintPlan(locations, titles, !locations.isEmpty(),
-                locationKnownToRepository, abstainReason);
+                locationKnownToRepository, abstainReason, bareNameAbsent);
+    }
+
+    /** The same plan, now certain the answer is nobody. */
+    SearchFieldConstraintPlan abstaining(String reason) {
+        if (abstains()) return this;
+        return new SearchFieldConstraintPlan(locations, titles, locationRequested,
+                locationKnownToRepository, reason, bareNameAbsent);
     }
 
     /** True when the answer is already known to be nobody, whatever the retrievers turn up. */
@@ -83,7 +112,9 @@ final class SearchFieldConstraintPlan {
     }
 
     boolean constrainsNothing() {
-        return locations.isEmpty() && titles.isEmpty();
+        // An abstention constrains everything, even with no field named: "정하은 명함" resolves no
+        // location and no title, yet the answer is already known to be nobody.
+        return locations.isEmpty() && titles.isEmpty() && !abstains() && !bareNameAbsent;
     }
 
     @Override public String toString() {
