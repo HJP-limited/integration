@@ -386,6 +386,8 @@ private fun runSearch(args: List<String>) = runBlocking {
     openAgent().use { agent ->
         val response = agent.backend.search(query, 5)
         println("질의: $query")
+        // 어느 티어에서 잡혔는지. 아래로 밀릴수록 순위 근거가 약해지므로 눈으로 봐야 한다.
+        println("키워드 티어: " + agent.repository.lastKeywordTiers().ifEmpty { listOf("(없음)") })
         println("임베더: ${agent.embedderStatus}")
         println(
             "엔진: ${response.engine} · 모드 ${response.mode}" +

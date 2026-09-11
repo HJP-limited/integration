@@ -25,6 +25,7 @@ import com.hjp.tool.android.OpenComposePlugin
 import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.searchlookup.QueryAnalyzer
 import com.hjp.tool.contact.KeywordSearchCandidate
+import com.hjp.tool.contact.StemDisambiguation
 import com.hjp.tool.contact.BusinessCardKeywordIndex
 import com.hjp.tool.contact.BusinessCardUpdateResult
 import com.hjp.tool.contact.ContactSearchBackend
@@ -360,10 +361,15 @@ class MultiturnScenarioHarness(
             query: String,
             limit: Int,
         ): List<KeywordSearchCandidate> {
-            val terms = analyzer.analyze(query).tokens
+            val analyzed = analyzer.analyze(query).tokens
                 .map { it.replace(Regex("[^\\p{L}\\p{N}]+"), "") }
                 .filter { it.length >= 2 }
                 .distinct()
+            // 앱·러너와 같은 규칙으로 조각/원본을 가린다. 여기만 빼면 시험이 실제보다
+            // 느슨한 조건으로 검색하게 된다.
+            val terms = StemDisambiguation.resolve(analyzed) { term ->
+                cards.any { searchableText(it).contains(term) }
+            }
             if (terms.isEmpty()) return emptyList()
             val ranked = linkedMapOf<String, String>()
             fun collect(tier: String, matches: (String) -> Boolean) {

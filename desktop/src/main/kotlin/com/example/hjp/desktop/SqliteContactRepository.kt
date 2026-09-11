@@ -7,6 +7,7 @@ import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.BusinessCardUpdateResult
 import com.hjp.tool.contact.KeywordSearchCandidate
 import com.hjp.tool.contact.MutableBusinessCardRepository
+import com.hjp.tool.contact.StemDisambiguation
 import com.hjp.tool.contact.StoredCardEmbedding
 import java.sql.Connection
 import java.sql.DriverManager
@@ -31,6 +32,12 @@ class SqliteContactRepository(dbPath: String) :
 
     private val conn: Connection = DriverManager.getConnection("jdbc:sqlite:$dbPath")
     private val analyzer = QueryAnalyzer()
+
+    /** 마지막 검색이 어느 티어에서 후보를 채웠는지. 러너가 눈으로 보려고 쓴다. */
+    @Volatile
+    private var lastTiers: List<String> = emptyList()
+
+    fun lastKeywordTiers(): List<String> = lastTiers
 
     init {
         conn.createStatement().use { st ->
@@ -175,10 +182,14 @@ class SqliteContactRepository(dbPath: String) :
 
     override suspend fun searchKeywordCandidates(query: String, limit: Int): List<KeywordSearchCandidate> {
         val safeLimit = limit.coerceIn(1, 200)
-        val terms = analyzer.analyze(query).tokens
+        val analyzed = analyzer.analyze(query).tokens
             .map { it.replace(UNSAFE, "") }
             .filter { it.length >= 2 && it.uppercase() !in OPERATORS }
             .distinct()
+        // 앱과 **같은 규칙**으로 조각/원본을 가린다(StemDisambiguation).
+        val terms = StemDisambiguation.resolve(analyzed) { term ->
+            runCatching { matchIds(term, 1).isNotEmpty() }.getOrDefault(false)
+        }
         if (terms.isEmpty()) return emptyList()
 
         val ranked = LinkedHashMap<String, String>()
@@ -198,6 +209,7 @@ class SqliteContactRepository(dbPath: String) :
                 }
             }
         }
+        lastTiers = ranked.values.distinct()
         return ranked.entries.take(safeLimit).mapIndexed { index, e ->
             KeywordSearchCandidate(e.key, index + 1, e.value)
         }

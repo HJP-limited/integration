@@ -7,6 +7,7 @@ import com.hjp.tool.contact.BusinessCardEmbeddingStore
 import com.hjp.tool.contact.BusinessCardKeywordIndex
 import com.hjp.tool.contact.KeywordSearchCandidate
 import com.hjp.tool.contact.MutableBusinessCardRepository
+import com.hjp.tool.contact.StemDisambiguation
 import com.hjp.tool.contact.StoredCardEmbedding
 import com.hjp.searchlookup.QueryAnalyzer
 import kotlinx.coroutines.sync.Mutex
@@ -82,7 +83,11 @@ class RoomBusinessCardRepository(
     ): List<KeywordSearchCandidate> {
         seedIfEmpty()
         val safeLimit = limit.coerceIn(1, 200)
-        val terms = TieredFtsQuery.analyze(query)
+        // 뗀 조각과 원본 중 색인에 실재하는 쪽만 남긴다. 둘 다 필수 조건으로 넣으면 반드시
+        // 하나가 안 맞아 티어가 아래로 밀린다 — 규칙은 StemDisambiguation 에 한 벌만 둔다.
+        val terms = StemDisambiguation.resolve(TieredFtsQuery.analyze(query)) { term ->
+            runCatching { dao.searchFtsIds(term, 1).isNotEmpty() }.getOrDefault(false)
+        }
         if (terms.isEmpty()) return emptyList()
         val ranked = linkedMapOf<String, String>()
         suspend fun collect(match: String?, tier: String) {
