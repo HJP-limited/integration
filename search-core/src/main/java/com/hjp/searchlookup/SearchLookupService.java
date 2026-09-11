@@ -63,6 +63,13 @@ public final class SearchLookupService implements RetrievalService {
             List<SearchResult> indexedKeywordResults, SearchPlanObserver observer) {
         long started=System.nanoTime(); int safe=Math.max(1,topK); RetrievalMode requested=mode==null?RetrievalMode.HYBRID:mode; RetrievalMode actual=requested; QueryAnalysis analysis=queryAnalyzer.analyze(rawQuery);
         String fallbackReason="";
+        // A phone number or an e-mail address is looked up, not understood. Meaning has nothing to
+        // say about 010-3000-6000, and fusing a semantic axis that scores R@5=0.000 on equal terms
+        // pushes the good keyword hits down: P@5 measured 1.000 -> 0.233 with it mixed in. So the
+        // semantic axis is dropped for these queries rather than merely down-weighted.
+        //
+        // The threshold is four digits because people ask that way — "번호 뒷자리 4312인 분".
+        if(actual==RetrievalMode.HYBRID&&isIdentifierQuery(rawQuery)){ actual=RetrievalMode.KEYWORD_ONLY; fallbackReason="IDENTIFIER_QUERY_SEMANTIC_EXCLUDED"; }
         if(actual!=RetrievalMode.KEYWORD_ONLY&&!embeddingEngine.isModelBacked()){ actual=RetrievalMode.KEYWORD_ONLY; fallbackReason=embeddingEngine.diagnosticStatus(); }
         List<SearchResult> keyword = actual==RetrievalMode.SEMANTIC_ONLY ? Collections.emptyList() : keywordResults(analysis,indexedKeywordResults);
         List<SearchResult> semantic=Collections.emptyList();
@@ -118,6 +125,23 @@ public final class SearchLookupService implements RetrievalService {
         }
         return response;
     }
+    /**
+     * Is this query an identifier lookup rather than a description?
+     *
+     * Four digits or an "@". Deliberately shape-based: the question is whether the words carry
+     * meaning a vector can use, and a run of digits does not, wherever it came from.
+     */
+    static boolean isIdentifierQuery(String rawQuery) {
+        if (rawQuery == null) return false;
+        String q = rawQuery.trim();
+        if (q.indexOf('@') >= 0) return true;
+        int digits = 0;
+        for (int i = 0; i < q.length(); i++) {
+            if (Character.isDigit(q.charAt(i))) digits++;
+        }
+        return digits >= 4;
+    }
+
     /** The field constraints a query resolves to. Package-private: for tests in this package. */
     SearchFieldConstraintPlan fieldConstraintPlan(String rawQuery){ return fieldConstraints.resolve(queryAnalyzer.analyze(rawQuery)); }
     @Override public BusinessCard getCard(String cardId){ return repository.getCard(cardId==null?null:cardId.trim()); }

@@ -43,6 +43,29 @@ object StemDisambiguation {
     }
 
     /**
+     * 숫자만 남긴 사본이 쪼갠 조각들을 이어 붙인 것과 같으면 버린다.
+     *
+     * "010-3000-6000" 은 낱말 셋(010·3000·6000)으로 쪼개지는데, 토크나이저가 숫자만 남긴
+     * 사본("01030006000")도 함께 내놓는다. 둘 다 필수 조건으로 넣으면 **정확 구문 티어가
+     * 네 낱말이 나란히 있기를** 요구하게 되고, 색인에서 그 넷이 붙어 있는지는 다른 칸(휴대폰)이
+     * 비었는지 같은 우연에 달린다. 조각들이 이미 있으면 이어 붙인 사본은 보탤 게 없다.
+     *
+     * 반대로 사용자가 "01030006000" 처럼 붙여서 친 경우에는 쪼갤 조각이 없으므로 그대로 남는다 —
+     * 그때는 색인에 함께 넣어 둔 숫자 사본이 받아 준다.
+     */
+    fun dropRedundantGluedDigits(terms: List<String>): List<String> {
+        val digitTerms = terms.filter { term -> term.all(Char::isDigit) }
+        if (digitTerms.size < 2) return terms
+        val parts = digitTerms.filter { it.length < MAX_DIGIT_PART }
+        if (parts.isEmpty()) return terms
+        val glued = parts.joinToString("")
+        return terms.filterNot { it.all(Char::isDigit) && it == glued }
+    }
+
+    /** 이보다 짧은 숫자 덩어리는 전화번호를 쪼갠 조각으로 본다. */
+    private const val MAX_DIGIT_PART = 8
+
+    /**
      * [stem] 이 [original] 에서 꼬리를 뗀 모양인가.
      *
      * 꼬리는 한두 음절까지만 본다. 그보다 길면 조사가 아니라 다른 낱말이고, 우연히 앞이

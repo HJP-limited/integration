@@ -1,5 +1,7 @@
 package com.example.hjp
 
+import com.hjp.tool.contact.StemDisambiguation
+
 import com.example.hjp.data.TieredFtsQuery
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,9 +15,18 @@ class TieredFtsQueryTest {
         // 뗄 수 있고, 원본이 사라지면 그 말이 통째로 검색에서 없어진다(실측: "정하은"의 은을
         // 조사로 보고 "정하"만 남아 정하은을 못 찾았다). 오려낸 조각이 추가될 뿐이다.
         assertEquals(listOf("강서연", "강서연씨"), TieredFtsQuery.analyze("강서연씨 찾아줘"))
+        // 하이픈에서 쪼갠 조각과, 토크나이저가 숫자만 남긴 사본이 함께 나온다. 색인의
+        // unicode61 토크나이저도 같은 자리에서 쪼개므로 조각이 정확 구문으로 맞고, 사본은
+        // 사용자가 붙여서 친 경우("01012344312")를 받는다. 둘 중 중복은 검색 직전에
+        // StemDisambiguation.dropRedundantGluedDigits 가 걷어낸다.
         assertEquals(
-            listOf("010-1234-4312".replace("-", "")),
+            listOf("010", "1234", "4312", "01012344312"),
             TieredFtsQuery.analyze("010-1234-4312").filter { it.all(Char::isDigit) },
+        )
+        assertEquals(
+            listOf("010", "1234", "4312"),
+            StemDisambiguation.dropRedundantGluedDigits(TieredFtsQuery.analyze("010-1234-4312"))
+                .filter { it.all(Char::isDigit) },
         )
         val hostile = TieredFtsQuery.analyze("김지원 OR * NOT")
         assertFalse(hostile.any { it.uppercase() in setOf("OR", "NOT") })

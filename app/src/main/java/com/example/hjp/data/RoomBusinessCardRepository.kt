@@ -85,7 +85,7 @@ class RoomBusinessCardRepository(
         val safeLimit = limit.coerceIn(1, 200)
         // 뗀 조각과 원본 중 색인에 실재하는 쪽만 남긴다. 둘 다 필수 조건으로 넣으면 반드시
         // 하나가 안 맞아 티어가 아래로 밀린다 — 규칙은 StemDisambiguation 에 한 벌만 둔다.
-        val terms = StemDisambiguation.resolve(TieredFtsQuery.analyze(query)) { term ->
+        val terms = StemDisambiguation.resolve(StemDisambiguation.dropRedundantGluedDigits(TieredFtsQuery.analyze(query))) { term ->
             runCatching { dao.searchFtsIds(term, 1).isNotEmpty() }.getOrDefault(false)
         }
         if (terms.isEmpty()) return emptyList()
@@ -161,8 +161,15 @@ internal object TieredFtsQuery {
         "회계" to listOf("회계", "회계사", "재무", "감사"),
     )
 
+    /**
+     * FTS 에 넣을 낱말. 안전하지 않은 글자는 **붙이지 않고 쪼갠다.**
+     *
+     * 붙이면 데이터에 없는 말이 만들어진다: daeunson@x.co.kr 이
+     * "daeunsonxcokr" 이 되어 한 건도 안 맞았다(실측: 이메일로 검색 0건). 색인의
+     * unicode61 토크나이저는 같은 자리에서 쪼개 넣으므로, 쪼개면 정확 구문으로 맞는다.
+     */
     fun analyze(raw: String): List<String> = analyzer.analyze(raw).tokens
-        .map { it.replace(unsafe, "") }
+        .flatMap { it.split(unsafe) }
         .filter { it.length >= 2 && it.uppercase() !in operators }
         .distinct()
 

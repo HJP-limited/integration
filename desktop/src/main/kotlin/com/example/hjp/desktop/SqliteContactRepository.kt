@@ -182,12 +182,13 @@ class SqliteContactRepository(dbPath: String) :
 
     override suspend fun searchKeywordCandidates(query: String, limit: Int): List<KeywordSearchCandidate> {
         val safeLimit = limit.coerceIn(1, 200)
+        // 안전하지 않은 글자는 붙이지 않고 **쪼갠다** — 앱의 TieredFtsQuery 와 같은 규칙.
         val analyzed = analyzer.analyze(query).tokens
-            .map { it.replace(UNSAFE, "") }
+            .flatMap { it.split(UNSAFE) }
             .filter { it.length >= 2 && it.uppercase() !in OPERATORS }
             .distinct()
         // 앱과 **같은 규칙**으로 조각/원본을 가린다(StemDisambiguation).
-        val terms = StemDisambiguation.resolve(analyzed) { term ->
+        val terms = StemDisambiguation.resolve(StemDisambiguation.dropRedundantGluedDigits(analyzed)) { term ->
             runCatching { matchIds(term, 1).isNotEmpty() }.getOrDefault(false)
         }
         if (terms.isEmpty()) return emptyList()
