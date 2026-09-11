@@ -1,6 +1,6 @@
 package com.example.hjp.ocr
 
-import com.example.hjp.data.BusinessCardEntity
+import com.hjp.tool.contact.BusinessCardRecord
 
 /**
  * 인식된 필드를 검색 가능한 명함 레코드로 바꾼다 — OCR 트랙과 검색 트랙이 실제로 만나는 지점.
@@ -23,7 +23,7 @@ object OcrCardMapper {
         fields: List<CardParser.Field>,
         id: String,
         updatedAtMillis: Long,
-    ): BusinessCardEntity {
+    ): BusinessCardRecord {
         fun first(vararg labels: String): String =
             labels.firstNotNullOfOrNull { label ->
                 fields.firstOrNull { it.label == label }?.value
@@ -39,23 +39,28 @@ object OcrCardMapper {
             .filter { it.label in EXTRA_LABELS }
             .joinToString(", ") { "${it.label}: ${it.value}" }
 
-        return BusinessCardEntity(
-            id,
-            first("이름"),
-            first("영문명"),
-            first("회사", "회사(영문)"),
-            first("직함"),
-            first("부서"),
-            "", // industry — 명함 텍스트만으로는 정할 수 없다. 사용자가 나중에 채운다.
-            REGION.find(address)?.value.orEmpty(),
-            phone,
-            first("이메일"),
-            address,
-            extras,
-            "", // tags — 사용자가 붙이는 값이라 인식 결과로 채우지 않는다.
-            updatedAtMillis,
+        return BusinessCardRecord(
+            id = id,
+            name = first("이름"),
+            nameEn = first("영문명"),
+            company = first("회사", "회사(영문)"),
+            title = first("직함"),
+            department = first("부서"),
+            // industry — 명함 텍스트만으로는 정할 수 없다. 사용자가 나중에 채운다.
+            industry = "",
+            location = REGION.find(address)?.value.orEmpty(),
+            phone = phone,
+            // 명함에 둘 다 있으면 휴대폰이 phone 으로 올라가 있으므로 여기는 유선만 남긴다.
+            mobile = first("휴대폰").takeIf { it.isNotBlank() && it != phone }.orEmpty(),
+            email = first("이메일"),
+            address = address,
+            website = first("웹"),
+            memo = extras,
+            // tags — 사용자가 붙이는 값이라 인식 결과로 채우지 않는다.
+            tags = emptyList(),
+            updatedAt = java.time.Instant.ofEpochMilli(updatedAtMillis).toString(),
         )
     }
 
-    private val EXTRA_LABELS = setOf("웹", "로고", "슬로건", "팩스", "한자명", "기타")
+    private val EXTRA_LABELS = setOf("로고", "슬로건", "팩스", "한자명", "기타")
 }

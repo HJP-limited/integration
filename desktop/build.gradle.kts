@@ -17,7 +17,6 @@ kotlin {
 }
 
 dependencies {
-    implementation(project(":core"))
     implementation(project(":core-ocr"))
 
     // :app 이 aar 로 쓰는 것과 같은 자바 API 의 데스크톱 구현.

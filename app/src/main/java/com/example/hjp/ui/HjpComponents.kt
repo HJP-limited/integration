@@ -28,7 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.hjp.data.BusinessCardEntity
+import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.ui.theme.AmberStar
 import com.example.hjp.ui.theme.BluePrimary
 import com.example.hjp.ui.theme.BluePrimaryDark
@@ -189,7 +189,7 @@ fun StatCard(label: String, value: String, description: String, modifier: Modifi
 /** 목록·검색 결과에 쓰는 한 줄 명함. */
 @Composable
 fun ContactRow(
-    card: BusinessCardEntity,
+    card: BusinessCardRecord,
     modifier: Modifier = Modifier,
     trailing: String? = null,
     favorite: Boolean = false,

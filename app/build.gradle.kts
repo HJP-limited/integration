@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -53,18 +55,33 @@ android {
     }
     buildFeatures {
         compose = true
+        // AppContainer 가 BuildConfig.DEBUG 로 커널 전환 가능 여부를 정한다.
+        buildConfig = true
     }
 }
 
 dependencies {
     // 검색·멀티턴 로직 본체. :desktop 러너도 같은 모듈을 쓰므로 규칙이 한 곳에만 있다.
-    implementation(project(":core"))
     // OCR 검출·인식·KIE. 같은 이유로 코드는 :core-ocr 한 곳에 있고, 여기서는 안드로이드용
     // 런타임(aar)만 제공한다 — :desktop 은 같은 코드에 데스크톱 jar 를 물린다.
     implementation(project(":core-ocr"))
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0")
     implementation("org.opencv:opencv:4.12.0")
+    // Agent_0910 의 에이전트/도구 계층. 턴 라우팅과 도구 선택이 여기 있다.
+    implementation(project(":agent-core"))
+    implementation(project(":agent-contract"))
+    implementation(project(":tool-contract"))
+    implementation(project(":tool-contact"))
+    implementation(project(":search-core"))
+    implementation(project(":tool-android-intents"))
+    implementation(project(":tool-datetime"))
+    implementation(project(":llm-litert"))
+    implementation(project(":agent-local-gateway"))
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
@@ -74,6 +91,10 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
+    // Agent_0910 의 앱 단위 테스트가 device-evidence 의 규칙 계약을 그대로 쓴다.
+    testImplementation(project(":device-evidence"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+
     // 안드로이드의 org.json 은 단위 테스트에서 스텁("not mocked")이라 그대로는 못 쓴다.
     // 검색 규칙 테스트가 실제 명함 JSON(data/cards_test.json)을 읽어야 해서 실제 구현을 넣는다.
     testImplementation("org.json:json:20240303")
@@ -83,8 +104,9 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    implementation("androidx.room:room-runtime:2.6.1")
-    annotationProcessor("androidx.room:room-compiler:2.6.1")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
     // EmbeddingGemma 실행용 공식 SDK — MediaPipe TextEmbedder는 이 모델을 못 읽는다 (메타데이터 없음)
     implementation("com.google.ai.edge.localagents:localagents-rag:0.3.0")
     // localagents-rag의 내부 proto 클래스가 이걸 필요로 하는데 SDK의 POM에 선언이 빠져 있어 직접 추가해야 한다

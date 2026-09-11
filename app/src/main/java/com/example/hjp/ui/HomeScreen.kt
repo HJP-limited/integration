@@ -27,8 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.hjp.data.BusinessCardEntity
-import com.example.hjp.search.CardSearchService
+import com.hjp.tool.contact.BusinessCardRecord
+import com.example.hjp.CardDirectory
 import com.example.hjp.ui.theme.BluePrimary
 import com.example.hjp.ui.theme.BlueSoft
 import com.example.hjp.ui.theme.VioletOnSoft
@@ -83,22 +83,22 @@ fun ScreenHeader(
 /** SCR-02 홈 — 누적 명함 수, 빠른 액션, 최근 명함. */
 @Composable
 fun HomeScreen(
-    searchService: CardSearchService,
+    directory: CardDirectory,
     onCapture: () -> Unit,
     onAgent: () -> Unit,
     onSeeAll: () -> Unit,
-    onCardClick: (BusinessCardEntity) -> Unit,
+    onCardClick: (BusinessCardRecord) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var total by remember { mutableStateOf<Int?>(null) }
-    var recent by remember { mutableStateOf<List<BusinessCardEntity>>(emptyList()) }
+    var recent by remember { mutableStateOf<List<BusinessCardRecord>>(emptyList()) }
 
     // 카드 수는 시드 로딩을 유발할 수 있어 IO 로 뺀다.
     LaunchedEffect(Unit) {
         val loaded = withContext(Dispatchers.IO) {
-            val count = searchService.totalCardCount()
+            val count = directory.totalCardCount()
             // 최근 추가 = updatedAtMillis 내림차순. OCR 로 방금 넣은 카드가 맨 위에 온다.
-            count to searchService.recentCards(3)
+            count to directory.recentCards(3)
         }
         total = loaded.first
         recent = loaded.second

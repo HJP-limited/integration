@@ -66,9 +66,10 @@ class OcrCardMapperTest {
     fun `엔티티에 자리 없는 필드는 메모로 보존해 검색에 걸리게 한다`() {
         val card = OcrCardMapper.toCard(realCardFields(), id = "OCR001", updatedAtMillis = 1L)
 
+        // memo 는 FTS 인덱스에 들어가는 칸이라(app 의 BusinessCardDao.toFtsEntity) 로고명으로도
+        // 검색이 걸린다. 인덱스 문자열을 만드는 일은 이제 저장소 쪽 관심사라 여기서는
+        // **잃지 않았다는 것**만 본다.
         assertTrue("로고명이 메모에 남아야 한다: ${card.memo}", card.memo.contains("코비하우스"))
-        // memo 도 인덱싱되므로 로고명으로 검색이 가능해야 한다
-        assertTrue(card.searchableText().contains("코비하우스"))
     }
 
     @Test

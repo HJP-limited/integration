@@ -1,8 +1,5 @@
 package com.example.hjp
 
-import com.example.hjp.agent.tools.OpenComposeTool
-import com.example.hjp.agent.tools.CreateCalendarEventTool
-import com.example.hjp.agent.tools.ToolRegistry
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -64,16 +61,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.hjp.agent.AgentSession
-import com.example.hjp.agent.ConversationalFollowup
-import com.example.hjp.agent.LiteRtChatEngineProvider
-import com.example.hjp.agent.LiteRtLmChatEngine
-import com.example.hjp.agent.LlmRole
-import com.example.hjp.data.BusinessCardEntity
-import com.example.hjp.search.CardSearchHit
-import com.example.hjp.search.CardSearchResponse
-import com.example.hjp.search.CardSearchService
-import com.example.hjp.search.createCardSearchService
+import com.hjp.agent.contract.AgentEvent
+import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.ui.CardDetailScreen
 import com.example.hjp.ui.CardListScreen
 import com.example.hjp.ui.CaptureScreen
@@ -101,14 +90,16 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra("q")
         }
 
-        val searchService = createCardSearchService(applicationContext)
+        // 에이전트 배선은 프로세스 하나에 하나뿐이다(HjpApplication 이 들고 있다).
+        // 액티비티가 다시 만들어져도 같은 세션이 이어지도록 여기서 새로 만들지 않는다.
+        val container = (application as HjpApplication).container
+        val directory = CardDirectory(container.contactRepository, container.contactBackend)
 
         setContent {
             HJPTheme {
                 HjpApp(
-                    searchService = searchService,
-                    initialToolLlmStatus = LiteRtLmChatEngine.modelStatus(applicationContext, LlmRole.ToolCalling),
-                    initialChatLlmStatus = LiteRtLmChatEngine.modelStatus(applicationContext, LlmRole.Chat),
+                    container = container,
+                    directory = directory,
                 )
             }
         }
@@ -155,7 +146,7 @@ internal enum class AppTab(val label: String, val icon: String) {
  * 탭이 아니라 흐름의 일부라서 뒤로 가면 원래 탭으로 돌아와야 한다.
  */
 internal sealed interface Overlay {
-    data class CardDetail(val card: BusinessCardEntity) : Overlay
+    data class CardDetail(val card: BusinessCardRecord) : Overlay
     data class OcrResult(val draft: OcrDraft) : Overlay
     data object Models : Overlay
 }
@@ -195,21 +186,22 @@ internal object DebugQuestion {
 }
 
 
+/**
+ * 말풍선 하나. [cards] 는 **그 턴에 도구가 실제로 찾은** 명함이다 — 화면이 같은 질문으로
+ * 다시 검색해서 채우지 않는다(재작성된 질의를 모르는 채 검색하면 답과 카드가 어긋난다).
+ */
 private data class ChatMessage(
     val isUser: Boolean,
     val text: String,
     val modelLabel: String? = null,
-    val search: CardSearchResponse? = null,
+    val cards: List<BusinessCardRecord> = emptyList(),
     val error: String? = null,
-    val conversationalFollowup: Boolean = false,
-    val filteredOut: List<String> = emptyList(),
 )
 
 @Composable
 fun HjpApp(
-    searchService: CardSearchService,
-    initialToolLlmStatus: String,
-    initialChatLlmStatus: String,
+    container: AppContainer,
+    directory: CardDirectory,
 ) {
     // SCR-01. 인증이 없으므로 진짜 관문이 아니라 첫 화면일 뿐이다.
     //
@@ -233,8 +225,15 @@ fun HjpApp(
         LoginScreen(onEnter = { signedIn = true }, modifier = Modifier.fillMaxSize())
         return
     }
-    var toolLlmStatus by remember { mutableStateOf(initialToolLlmStatus) }
-    var chatLlmStatus by remember { mutableStateOf(initialChatLlmStatus) }
+    // 모델 상태는 커널이 실제로 읽은 아티팩트에서 온다 — 파일 이름이 아니라 바이트를
+    // 보고 정한 값이라, 파일만 바꿔치기해도 여기 표시가 따라간다.
+    val deploymentStatus = if (container.modelReady) {
+        container.deployment.artifactId
+    } else {
+        "missing: " + container.modelFile.absolutePath
+    }
+    var toolLlmStatus by remember { mutableStateOf(deploymentStatus) }
+    var chatLlmStatus by remember { mutableStateOf(deploymentStatus) }
 
     Scaffold(
         // imePadding 은 **Scaffold 에** 건다. 화면 쪽 Column 에 걸면 Scaffold 가 이미 준
@@ -281,10 +280,10 @@ fun HjpApp(
                             val card = withContext(Dispatchers.IO) {
                                 val saved = OcrCardMapper.toCard(
                                     current.draft.fields,
-                                    searchService.nextOcrCardId(),
+                                    directory.nextOcrCardId(),
                                     System.currentTimeMillis(),
                                 )
-                                searchService.addCard(saved)
+                                directory.addCard(saved)
                                 saved
                             }
                             saving = false
@@ -296,17 +295,13 @@ fun HjpApp(
             }
 
             Overlay.Models -> ModelsScreen(
-                searchService = searchService,
-                toolLlmStatus = toolLlmStatus,
-                chatLlmStatus = chatLlmStatus,
-                onToolLlmStatusChanged = { toolLlmStatus = it },
-                onChatLlmStatusChanged = { chatLlmStatus = it },
+                container = container,
                 modifier = content,
             )
 
             null -> when (selectedTab) {
                 AppTab.Home -> HomeScreen(
-                    searchService = searchService,
+                    directory = directory,
                     onCapture = { selectedTab = AppTab.Capture },
                     onAgent = { selectedTab = AppTab.Agent },
                     onSeeAll = { selectedTab = AppTab.Cards },
@@ -315,7 +310,7 @@ fun HjpApp(
                 )
 
                 AppTab.Cards -> CardListScreen(
-                    searchService = searchService,
+                    directory = directory,
                     onCardClick = { overlay = Overlay.CardDetail(it) },
                     modifier = content,
                 )
@@ -326,17 +321,17 @@ fun HjpApp(
                 )
 
                 AppTab.Agent -> ChatScreen(
-                    searchService = searchService,
+                    container = container,
                     modifier = content,
                 )
 
                 AppTab.Settings -> {
                     var cardCount by remember { mutableStateOf<Int?>(null) }
                     LaunchedEffect(Unit) {
-                        cardCount = withContext(Dispatchers.IO) { searchService.totalCardCount() }
+                        cardCount = withContext(Dispatchers.IO) { directory.totalCardCount() }
                     }
                     SettingsScreen(
-                        engineStatus = searchService.engineStatus,
+                        engineStatus = directory.engineStatus(),
                         toolLlmStatus = toolLlmStatus,
                         chatLlmStatus = chatLlmStatus,
                         cardCount = cardCount,
@@ -351,22 +346,16 @@ fun HjpApp(
 
 @Composable
 internal fun ChatScreen(
-    searchService: CardSearchService,
+    container: AppContainer,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
     var asking by remember { mutableStateOf(false) }
-    var selectedCard by remember { mutableStateOf<BusinessCardEntity?>(null) }
-    // 멀티턴 세션 — 앱 프로세스가 살아있는 동안 하나를 유지한다(운영 아키텍처 규격).
-    // 지칭 대상 인물과 직전 결과 카드는 tool_session_context 에 저장된다.
-    val session = remember { AgentSession() }
-    // 턴 파이프라인(:core)에 꽂아 줄 안드로이드 구현. 캘린더/메일은 인텐트를 여는 것까지만 한다.
-    val engines = remember(context) { LiteRtChatEngineProvider(context) }
-    val tools = remember(context) {
-        ToolRegistry(CreateCalendarEventTool(context), OpenComposeTool(context))
-    }
+    var selectedCard by remember { mutableStateOf<BusinessCardRecord?>(null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    // 멀티턴 세션은 [AppContainer] 가 프로세스 하나에 하나만 들고 있다. 화면이 따로
+    // 만들지 않는다 — 탭을 옮기거나 화면이 다시 그려져도 대화가 이어져야 한다.
     val messages = remember {
         mutableStateListOf(
             ChatMessage(isUser = false, text = "명함에 대해 문장으로 물어보세요.\n예) \"판교에 있는 AI 개발자 찾아줘\"")
@@ -381,68 +370,62 @@ internal fun ChatScreen(
     // 손으로 타이핑하는 수밖에 없었다. 아래 DebugQuestion 으로 밀어 넣으면
     // 노트북에서 시나리오를 그대로 태울 수 있고, 세션이 유지되므로 멀티턴도 된다.
     fun send(question: String) {
-        if (question.isBlank()) return
-            messages.add(ChatMessage(isUser = true, text = question))
-            // 턴 시작을 구조화 메모리에 걸어둔다 — 이 턴이 끝까지 완료되지 못해도
-            // (예외 등) 다음 턴에서 "아직 처리 못한 요청"으로 남는다.
-            val turnId = java.util.UUID.randomUUID().toString()
-            session.beginTurn(turnId, question)
-            scope.launch {
-                asking = true
-                val startedAt = System.currentTimeMillis()
-                val result = withContext(Dispatchers.IO) {
-                    runChat(searchService, engines, tools, question, session)
+        if (question.isBlank() || asking) return
+        messages.add(ChatMessage(isUser = true, text = question))
+        // 이 턴에 도구가 찾은 명함만 답변 아래 붙인다. 안 비우면 검색을 안 한 턴이
+        // 앞 턴의 카드를 물려받아, 답과 카드가 어긋난 채로 남는다.
+        container.contactBackend.clear()
+        scope.launch {
+            asking = true
+            status = "요청을 해석하고 있어요."
+            val startedAt = System.currentTimeMillis()
+            // 커널이 모델을 부르고 도구를 고른다. 화면은 흘러나오는 사건만 모은다 —
+            // 어떤 도구를 언제 쓸지는 여기서 정하지 않는다(Agent_0910 의 AgentKernel 담당).
+            val answer = StringBuilder()
+            var failure: String? = null
+            runCatching {
+                container.engine.runTurn(question).collect { event ->
+                    when (event) {
+                        is AgentEvent.TurnStarted -> Unit
+                        is AgentEvent.ToolStarted -> status = event.messageKo
+                        is AgentEvent.ToolFinished -> status = event.messageKo
+                        is AgentEvent.ConfirmationRequested -> status = event.promptKo
+                        is AgentEvent.PermissionRequested ->
+                            status = "필요한 권한: " + event.permissions.joinToString()
+                        is AgentEvent.Token -> answer.append(event.text)
+                        is AgentEvent.FinalMessage ->
+                            if (answer.isBlank()) answer.append(event.text)
+                        is AgentEvent.UserError -> failure = event.messageKo
+                    }
                 }
-                asking = false
-                // 실기기 진단 로그. `adb logcat -s HJP` 로 본다.
-                //
-                // 이게 없을 때는 폰에서 무슨 일이 일어나는지 전혀 볼 수 없었다 —
-                // 크래시만 보이고 어느 경로로 갔는지, 어떤 조건이 잡혔는지, 얼마나
-                // 걸렸는지가 안 보여서 화면을 눈으로 읽는 수밖에 없었다.
-                // 노트북 서버(hybrid_server.py)가 내는 항목과 **같은 이름**을 쓴다 —
-                // 양자화 임베딩 때문에 폰과 노트북의 검색 순위가 갈릴 수 있어서
-                // 둘을 나란히 놓고 대조하는 게 목적이다.
-                android.util.Log.i(
-                    DIAG_TAG,
-                    buildString {
-                        append("q=").append(question)
-                        append(" | route=").append(result.route ?: "-")
-                        append(" | ms=").append(System.currentTimeMillis() - startedAt)
-                        result.search?.let { s ->
-                            append(" | filters=").append(s.fieldFilters)
-                            append(" | abstained=").append(s.abstained)
-                            append(" | cards=")
-                                .append(s.results.joinToString(",") { it.card.name })
-                        }
-                        if (result.filteredOut.isNotEmpty()) {
-                            append(" | dropped=").append(result.filteredOut.joinToString(","))
-                        }
-                        append(" | answer=").append(result.answer.replace('\n', ' ').take(120))
-                        result.error?.let { append(" | error=").append(it) }
-                    },
+            }.onFailure { failure = it.message ?: it.javaClass.simpleName }
+            asking = false
+            status = null
+
+            val cards = container.contactBackend.lastHits
+            val text = failure ?: answer.toString().trim().ifBlank { "답변을 만들지 못했어요." }
+            // 실기기 진단 로그. `adb logcat -s HJP` 로 본다. 폰에서 무슨 일이 일어났는지
+            // 이게 없으면 화면을 눈으로 읽는 수밖에 없다.
+            android.util.Log.i(
+                DIAG_TAG,
+                buildString {
+                    append("q=").append(question)
+                    append(" | ms=").append(System.currentTimeMillis() - startedAt)
+                    append(" | cards=").append(cards.joinToString(",") { it.name })
+                    append(" | answer=").append(text.replace('\n', ' ').take(120))
+                    failure?.let { append(" | error=").append(it) }
+                },
+            )
+            messages.add(
+                ChatMessage(
+                    isUser = false,
+                    text = text,
+                    modelLabel = container.deployment.artifactId,
+                    cards = cards,
+                    error = failure,
                 )
-                // 대화 내역은 세션이 관리한다(최근 8개 window + 구조화 메모리).
-                // 후속 발화 재사용 턴은 새로 검색하지 않았으니 도구 실행 기록도 없다.
-                val executedTools = if (result.conversationalFollowup) {
-                    emptyList()
-                } else {
-                    listOf("search_business_cards")
-                }
-                session.recordTurn(turnId, question, result.answer, executedTools)
-                // 다음 턴의 재작성이 읽을 세션 상태를 남긴다(:core 공유 — 데스크톱 러너도 같은 것을 쓴다).
-                recordTurnState(session, question, result)
-                messages.add(
-                    ChatMessage(
-                        isUser = false,
-                        text = result.answer,
-                        modelLabel = result.modelLabel,
-                        search = result.search,
-                        error = result.error,
-                        conversationalFollowup = result.conversationalFollowup,
-                        filteredOut = result.filteredOut,
-                    )
-                )
-            }
+            )
+        }
     }
 
     // 디버그 인텐트로 들어온 질문을 태운다(앱을 껐다 켜지 않으므로 세션이 유지된다).
@@ -479,9 +462,9 @@ internal fun ChatScreen(
                     messages.add(
                         ChatMessage(isUser = false, text = "명함에 대해 문장으로 물어보세요.\n예) \"판교에 있는 AI 개발자 찾아줘\"")
                     )
-                    // 세션 초기화 시 대화 내역과 모델 conversation 을 모두 폐기한다.
-                    session.reset()
-                    scope.launch(Dispatchers.IO) { LiteRtLmChatEngine.resetSharedChat() }
+                    // 커널이 세션을 원자적으로 갈아끼운다 — 진행 중이던 턴이 새 세션에
+                    // 끼어들지 못하도록 세대(generation)를 올린다.
+                    scope.launch { container.resetSession() }
                 },
             ) {
                 Text("새 대화")
@@ -535,7 +518,7 @@ internal fun ChatScreen(
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, onCardClick: (BusinessCardEntity) -> Unit = {}) {
+private fun ChatBubble(message: ChatMessage, onCardClick: (BusinessCardRecord) -> Unit = {}) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -574,10 +557,15 @@ private fun ChatBubble(message: ChatMessage, onCardClick: (BusinessCardEntity) -
                 }
             }
         }
-        message.search?.let { search ->
-            SearchSummary(search, message.conversationalFollowup, message.filteredOut)
-            search.results.take(5).forEach { hit ->
-                BusinessCardResultCard(hit, onClick = { onCardClick(hit.card) })
+        // 답변의 근거가 된 명함. 도구가 찾아온 것을 그대로 쓴다(화면이 다시 검색하지 않는다).
+        if (message.cards.isNotEmpty()) {
+            Text(
+                "명함 " + message.cards.size + "장",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            message.cards.take(5).forEach { card ->
+                BusinessCardResultCard(card, onClick = { onCardClick(card) })
             }
         }
     }
@@ -602,59 +590,35 @@ private fun TypingBubble() {
 
 @Composable
 internal fun ModelsScreen(
-    searchService: CardSearchService,
-    toolLlmStatus: String,
-    chatLlmStatus: String,
-    onToolLlmStatusChanged: (String) -> Unit,
-    onChatLlmStatusChanged: (String) -> Unit,
+    container: AppContainer,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var diagnostics by remember { mutableStateOf<JSONObject?>(null) }
     var importMessage by remember { mutableStateOf<String?>(null) }
-    var embedCheckMessage by remember { mutableStateOf<String?>(null) }
-    var embedChecking by remember { mutableStateOf(false) }
-    var toolTestMessage by remember { mutableStateOf<String?>(null) }
-    var toolTesting by remember { mutableStateOf(false) }
-    var chatTestMessage by remember { mutableStateOf<String?>(null) }
-    var chatTesting by remember { mutableStateOf(false) }
-    var indexMessage by remember { mutableStateOf<String?>(null) }
-    var indexing by remember { mutableStateOf(false) }
-    var pendingModelFileName by remember { mutableStateOf("embeddinggemma-300m.tflite") }
+    var pendingModelFileName by remember { mutableStateOf(GENERATIVE_MODEL_FILE) }
+    // 아티팩트 판정은 커널이 파일 **내용**을 보고 한다. 화면은 그 결과만 읽는다 —
+    // 파일 이름으로 판단하면 이름만 바꿔 둔 파일이 통과해 버린다.
+    var snapshot by remember { mutableStateOf(container.diagnosticsSnapshot()) }
 
     val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            importMessage = "${pendingModelFileName} 복사 중... (파일 크기에 따라 시간이 걸립니다)"
+            importMessage = pendingModelFileName + " 복사 중... (파일 크기에 따라 시간이 걸립니다)"
             val result = withContext(Dispatchers.IO) {
                 runCatching { copyModelToAppStorage(context, uri, pendingModelFileName) }
             }
             result.onSuccess { copied ->
-                onToolLlmStatusChanged(LiteRtLmChatEngine.modelStatus(context, LlmRole.ToolCalling))
-                onChatLlmStatusChanged(LiteRtLmChatEngine.modelStatus(context, LlmRole.Chat))
-                importMessage = "${pendingModelFileName} 복사 완료 (${formatBytes(copied.length())})"
-                diagnostics = withContext(Dispatchers.IO) {
-                    searchService.reloadEmbeddingProvider()
-                    searchService.diagnostics()
-                }
+                importMessage = pendingModelFileName + " 복사 완료 (" + formatBytes(copied.length()) + ")" +
+                    NEEDS_RESTART_NOTE
             }.onFailure {
-                importMessage = "복사 실패: ${it.message ?: it.javaClass.simpleName}"
+                importMessage = "복사 실패: " + (it.message ?: it.javaClass.simpleName)
             }
+            snapshot = container.diagnosticsSnapshot()
         }
     }
 
-    LaunchedEffect(Unit) {
-        diagnostics = withContext(Dispatchers.IO) { searchService.diagnostics() }
-    }
-
-    val embedStatus = diagnostics?.optString("active_embedding_status").orEmpty()
-    val embedState = when {
-        diagnostics?.optBoolean("active_embedding_model_backed") == true -> ModelState.Ready
-        diagnostics == null || embedStatus.startsWith("missing:") -> ModelState.Missing
-        else -> ModelState.Failed
-    }
-
+    val generativeReady = container.modelReady
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -662,208 +626,101 @@ internal fun ModelsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("모델 관리", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "모든 AI 기능은 인터넷 없이 기기 안에서 동작합니다. 각 모델 파일을 가져온 뒤 '동작 확인'을 눌러 실제로 실행되는지 검사해 보세요.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Text("모델 파일 관리", style = MaterialTheme.typography.titleLarge)
+
+        ModelCard(
+            title = "대화·도구 호출 모델",
+            subtitle = "Gemma 4 E2B (LiteRT-LM) · " + GENERATIVE_MODEL_FILE,
+            role = "질문을 읽고 어떤 도구를 쓸지 고른 뒤 답변을 씁니다. " +
+                "명함 검색·상세 조회·일정·메일이 모두 이 모델의 판단을 거칩니다.",
+            state = if (generativeReady) ModelState.Ready else ModelState.Missing,
+            stateLabel = if (generativeReady) "사용 준비됨" else "모델 파일 없음 — 파일을 가져와 주세요",
+            detail = container.modelFile.absolutePath,
+            onImport = {
+                pendingModelFileName = GENERATIVE_MODEL_FILE
+                modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
+            },
+            checking = false,
+            onCheck = { snapshot = container.diagnosticsSnapshot() },
+            resultText = null,
         )
-        importMessage?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (it.startsWith("복사 실패")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
 
         ModelCard(
             title = "임베딩 모델",
             subtitle = "EmbeddingGemma 300M · 모델(.tflite) + 토크나이저(sentencepiece.model) 2개 파일 필요",
-            role = "채팅 탭의 의미 검색에 사용합니다. \"판교에서 만난 AI 하는 분\"처럼 문장 뜻으로 명함을 찾아줍니다.",
-            state = embedState,
-            stateLabel = when {
-                embedState == ModelState.Ready -> "사용 준비됨"
-                embedState == ModelState.Missing && embedStatus.contains("sentencepiece") -> "토크나이저 없음 — sentencepiece.model을 가져와 주세요"
-                embedState == ModelState.Missing -> "모델 파일 없음 — 파일을 가져와 주세요"
-                else -> "파일은 있지만 로드 실패"
+            role = "\"판교에서 만난 AI 하는 분\"처럼 문장 뜻으로 명함을 찾습니다. " +
+                "없으면 키워드 검색만으로 내려갑니다.",
+            // 임베더는 첫 검색에서 지연 로드된다. 파일 유무만으로 단정하지 않고,
+            // 실제로 검색이 한 번 돌아 기록된 엔진 이름을 보고 판정한다.
+            state = if (container.contactBackend.engineName().contains("HYBRID", ignoreCase = true)) {
+                ModelState.Ready
+            } else {
+                ModelState.Missing
             },
-            detail = if (embedState == ModelState.Failed) embedStatus else "",
+            stateLabel = container.contactBackend.engineName(),
+            detail = "",
             onImport = {
-                pendingModelFileName = "embeddinggemma-300m.tflite"
+                pendingModelFileName = EMBEDDING_MODEL_FILE
                 modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
             },
+            checking = false,
+            onCheck = { snapshot = container.diagnosticsSnapshot() },
+            resultText = null,
             secondaryImportLabel = "토크나이저 가져오기",
             onSecondaryImport = {
-                pendingModelFileName = "sentencepiece.model"
+                pendingModelFileName = EMBEDDING_TOKENIZER_FILE
                 modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
             },
-            checking = embedChecking,
-            onCheck = {
-                scope.launch {
-                    embedChecking = true
-                    diagnostics = withContext(Dispatchers.IO) {
-                        searchService.reloadEmbeddingProvider()
-                        searchService.diagnostics()
-                    }
-                    embedChecking = false
-                    embedCheckMessage = diagnostics?.let { d ->
-                        if (d.optBoolean("active_embedding_model_backed")) {
-                            "정상 동작 · ${d.optInt("embedding_dimensions")}차원 · 문장 1개 ${d.optLong("sample_embedding_ms")}ms"
-                        } else {
-                            "실행 실패: ${d.optString("active_embedding_status")}"
-                        }
-                    } ?: "상태를 읽지 못했습니다."
-                }
-            },
-            resultText = embedCheckMessage,
         )
 
-        ModelCard(
-            title = "도구 실행 LLM",
-            subtitle = "FunctionGemma 270M · functiongemma_270m.litertlm",
-            role = "\"김지원한테 문자 보내줘\" 같은 요청을 캘린더·문자 도구 호출로 바꾸는 에이전트용 모델입니다. (에이전트 화면은 아직 연동 전)",
-            state = if (toolLlmStatus.startsWith("missing:")) ModelState.Missing else ModelState.Ready,
-            stateLabel = if (toolLlmStatus.startsWith("missing:")) "모델 파일 없음 — 파일을 가져와 주세요" else "파일 있음 — 동작 확인으로 실행을 검사하세요",
-            detail = "",
-            onImport = {
-                pendingModelFileName = "functiongemma_270m.litertlm"
-                modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
-            },
-            checking = toolTesting,
-            onCheck = {
-                scope.launch {
-                    toolTesting = true
-                    toolTestMessage = withContext(Dispatchers.IO) { runLlmSmokeTest(context, LlmRole.ToolCalling) }
-                    toolTesting = false
-                    onToolLlmStatusChanged(LiteRtLmChatEngine.modelStatus(context, LlmRole.ToolCalling))
-                }
-            },
-            resultText = toolTestMessage,
-        )
+        importMessage?.let {
+            StatusCard("가져오기", it, ok = !it.startsWith("복사 실패"))
+        }
 
-        ModelCard(
-            title = "채팅 LLM",
-            subtitle = "Gemma 4 E2B IT · gemma-4-E2B-it.litertlm",
-            role = "채팅 탭에서 검색된 명함 내용을 바탕으로 답변 문장을 만드는 모델입니다.",
-            state = if (chatLlmStatus.startsWith("missing:")) ModelState.Missing else ModelState.Ready,
-            stateLabel = if (chatLlmStatus.startsWith("missing:")) "모델 파일 없음 — 파일을 가져와 주세요" else "파일 있음 — 동작 확인으로 실행을 검사하세요",
-            detail = "",
-            onImport = {
-                pendingModelFileName = "gemma-4-E2B-it.litertlm"
-                modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
-            },
-            checking = chatTesting,
-            onCheck = {
-                scope.launch {
-                    chatTesting = true
-                    chatTestMessage = withContext(Dispatchers.IO) { runLlmSmokeTest(context, LlmRole.Chat) }
-                    chatTesting = false
-                    onChatLlmStatusChanged(LiteRtLmChatEngine.modelStatus(context, LlmRole.Chat))
-                }
-            },
-            resultText = chatTestMessage,
-        )
-
+        Text("진단", style = MaterialTheme.typography.titleMedium)
+        // 이름·주소·프롬프트는 여기 들어오지 않는다(AppContainer.diagnosticsSnapshot 규칙).
         Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("임베딩 인덱스", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "명함 데이터를 새로 넣었다면 여기서 인덱스를 미리 만들어 두세요. 만들지 않으면 첫 채팅 질문이 수 분씩 걸립니다.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Button(
-                    enabled = !indexing && embedState == ModelState.Ready,
-                    onClick = {
-                        scope.launch {
-                            indexing = true
-                            val result = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    searchService.indexEmbeddings { done, total ->
-                                        if (done % 50 == 0 || done == total) {
-                                            scope.launch { indexMessage = "인덱싱 중... $done / $total" }
-                                        }
-                                    }
-                                }
-                            }
-                            indexing = false
-                            indexMessage = result.fold(
-                                onSuccess = { "인덱스 구축 완료. 채팅 검색을 바로 쓸 수 있습니다." },
-                                onFailure = { "인덱싱 실패: ${it.message ?: it.javaClass.simpleName}" },
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (indexing) "인덱싱 중..." else "인덱스 만들기")
-                }
-                if (embedState != ModelState.Ready) {
-                    Text("임베딩 모델이 준비되면 사용할 수 있습니다.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                indexMessage?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (it.startsWith("인덱싱 실패")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                snapshot.forEach { (k, v) ->
+                    Text(k + " = " + v, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
     }
 }
 
-@Composable
-private fun SearchSummary(
-    response: CardSearchResponse,
-    conversationalFollowup: Boolean = false,
-    filteredOut: List<String> = emptyList(),
-) {
-    // 검색이 왜 이렇게 동작했는지 화면에서 바로 보이게 한다 — 라우팅/필터/기권이 조용히
-    // 결과를 바꾸면 "검색이 이상하다"와 "규칙이 걸렸다"를 구분할 수 없다.
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AssistChip(onClick = {}, label = { Text("키워드: ${response.keywordQuery.ifBlank { "전체" }}") })
-            AssistChip(onClick = {}, label = { Text(response.retrieval) })
-        }
-        val notes = buildList {
-            if (conversationalFollowup) add("정정/확인 발화 → 재검색 없이 직전 결과 사용")
-            if (response.identifierRouted) add("식별자 질의 → 시맨틱 제외")
-            if (!response.fieldFilters.isEmpty) add("필드 필터 ${response.fieldFilters}")
-            if (response.abstained) add("기권 — 없는 이름/지역/번호")
-            if (filteredOut.isNotEmpty()) add("무관 판정 제외 ${filteredOut.size}명: ${filteredOut.joinToString(", ")}")
-        }
-        notes.forEach {
-            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
+/** 커널이 찾는 생성 모델 파일 이름. [AppContainer.modelFile] 과 같아야 한다. */
+private const val GENERATIVE_MODEL_FILE = "hjp-agent.litertlm"
+private const val EMBEDDING_MODEL_FILE = "embeddinggemma-300m.tflite"
+private const val EMBEDDING_TOKENIZER_FILE = "sentencepiece.model"
+
+/** 아티팩트 판정은 프로세스 시작 때 한 번 한다 — 새 파일은 앱을 다시 열어야 잡힌다. */
+private const val NEEDS_RESTART_NOTE = " — 앱을 다시 열면 반영됩니다."
 
 @Composable
-private fun BusinessCardResultCard(hit: CardSearchHit, onClick: (() -> Unit)? = null) {
+private fun BusinessCardResultCard(card: BusinessCardRecord, onClick: (() -> Unit)? = null) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(hit.card.name.ifBlank { "(이름 없음)" }, style = MaterialTheme.typography.titleMedium)
-            Text("${hit.card.company} · ${hit.card.title}", style = MaterialTheme.typography.bodyMedium)
-            if (hit.card.department.isNotBlank() || hit.card.location.isNotBlank()) {
-                Text("${hit.card.department} · ${hit.card.location}", style = MaterialTheme.typography.bodySmall)
+            Text(card.name.ifBlank { "(이름 없음)" }, style = MaterialTheme.typography.titleMedium)
+            Text(card.company + " · " + card.title, style = MaterialTheme.typography.bodyMedium)
+            if (card.department.isNotBlank() || card.location.isNotBlank()) {
+                Text(card.department + " · " + card.location, style = MaterialTheme.typography.bodySmall)
             }
-            Text("${hit.card.phone}  ${hit.card.email}", style = MaterialTheme.typography.bodySmall)
-            if (hit.card.address.isNotBlank()) {
-                Text(hit.card.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(card.phone + "  " + card.email, style = MaterialTheme.typography.bodySmall)
+            if (card.address.isNotBlank()) {
+                Text(card.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            // 하이브리드(RRF) 점수는 0.03처럼 작아서 소수점 1자리로는 0.0으로 보인다
-            val scoreText = if (hit.score < 1.0) "%.3f".format(hit.score) else "%.1f".format(hit.score)
-            Text("검색 점수 $scoreText", style = MaterialTheme.typography.labelSmall)
         }
     }
 }
 
 /** 명함 상세: 명함 이미지(있으면) + 전체 필드 표 */
 @Composable
-private fun CardDetailDialog(card: BusinessCardEntity, onDismiss: () -> Unit) {
+private fun CardDetailDialog(card: BusinessCardRecord, onDismiss: () -> Unit) {
     val context = LocalContext.current
     // 합성 데이터 카드 id(S00021)는 이미지 파일명(000021.png)과 매핑된다.
     // OCR로 들어올 미래 카드는 "{id}.png" 그대로 찾는다.
@@ -925,7 +782,7 @@ private fun CardDetailDialog(card: BusinessCardEntity, onDismiss: () -> Unit) {
                     "이메일" to card.email,
                     "주소" to card.address,
                     "메모" to card.memo,
-                    "태그" to card.tags,
+                    "태그" to card.tags.joinToString(", "),
                 ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
                     Row(Modifier.fillMaxWidth()) {
                         Text(
@@ -1048,15 +905,6 @@ private fun StatusCard(
 
 
 
-
-private fun runLlmSmokeTest(context: Context, role: LlmRole): String =
-    try {
-        val engine = LiteRtLmChatEngine.openShared(context, role)
-        val answer = engine.generate("Reply with one short Korean sentence.")
-        "정상 동작 (${engine.backendName}) · 생성 예시: ${answer.take(80)}"
-    } catch (e: Throwable) {
-        "실행 실패: ${e.message ?: e.javaClass.simpleName}"
-    }
 
 private fun copyModelToAppStorage(context: Context, uri: Uri, fileName: String): File {
     val dir = context.getExternalFilesDir("models") ?: File(context.filesDir, "models")

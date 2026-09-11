@@ -27,14 +27,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.hjp.data.BusinessCardEntity
+import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.ui.theme.Slate700
 import com.example.hjp.ui.theme.Slate900
 
 /** SCR-06 명함 상세 — 단일 명함의 전체 정보와 액션. */
 @Composable
 fun CardDetailScreen(
-    card: BusinessCardEntity,
+    card: BusinessCardRecord,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -125,7 +125,7 @@ fun CardDetailScreen(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             InfoRow("메모", card.memo)
 
-            val tags = card.tags.split(',').map { it.trim() }.filter { it.isNotBlank() }
+            val tags = card.tags.map { it.trim() }.filter { it.isNotBlank() }
             if (tags.isNotEmpty()) {
                 Row(
                     Modifier.padding(top = 14.dp),

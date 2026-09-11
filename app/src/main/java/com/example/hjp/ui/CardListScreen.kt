@@ -33,8 +33,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.hjp.data.BusinessCardEntity
-import com.example.hjp.search.CardSearchService
+import com.hjp.tool.contact.BusinessCardRecord
+import com.example.hjp.CardDirectory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,19 +48,19 @@ private enum class SortOrder(val label: String) {
 /** SCR-05 명함 목록 — 전체 리스트와 검색바. */
 @Composable
 fun CardListScreen(
-    searchService: CardSearchService,
-    onCardClick: (BusinessCardEntity) -> Unit,
+    directory: CardDirectory,
+    onCardClick: (BusinessCardRecord) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(SortOrder.Recent) }
-    var all by remember { mutableStateOf<List<BusinessCardEntity>>(emptyList()) }
-    var hits by remember { mutableStateOf<List<BusinessCardEntity>?>(null) }
+    var all by remember { mutableStateOf<List<BusinessCardRecord>>(emptyList()) }
+    var hits by remember { mutableStateOf<List<BusinessCardRecord>?>(null) }
     var searching by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        all = withContext(Dispatchers.IO) { searchService.recentCards(Int.MAX_VALUE) }
+        all = withContext(Dispatchers.IO) { directory.recentCards(Int.MAX_VALUE) }
     }
 
     fun runSearch() {
@@ -71,11 +71,10 @@ fun CardListScreen(
         }
         searching = true
         scope.launch {
-            // 목록 검색은 키워드 경로만 쓴다 — 임베딩까지 태우면 타이핑마다 수백 ms 가 붙는다.
-            // 자연어 질문은 Agent 탭이 담당한다.
+            // 에이전트가 쓰는 것과 **같은 검색**을 부른다. 목록에서 찾은 사람과 채팅에서
+            // 찾은 사람이 다르면 사용자는 둘 중 무엇을 믿어야 할지 알 수 없다.
             val found = withContext(Dispatchers.IO) {
-                runCatching { searchService.searchKeywordOnly(q, 20).results.map { it.card } }
-                    .getOrDefault(emptyList())
+                runCatching { directory.search(q, 20) }.getOrDefault(emptyList())
             }
             hits = found
             searching = false

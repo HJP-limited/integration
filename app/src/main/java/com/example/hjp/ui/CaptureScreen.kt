@@ -42,7 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import com.example.hjp.data.BusinessCardEntity
+import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.ocr.AndroidOcr
 import com.example.hjp.ocr.CardParser
 import com.example.hjp.ocr.OcrCardMapper
