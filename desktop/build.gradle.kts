@@ -1,23 +1,26 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
     alias(libs.plugins.kotlin.jvm)
     application
 }
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
-}
-
+// Agent_0910 모듈들이 21 툴체인이라 여기도 21 로 맞춘다.
 kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_11)
-    }
+    jvmToolchain(21)
 }
 
 dependencies {
     implementation(project(":core-ocr"))
+    // 앱과 **같은** 에이전트 커널·도구·검색을 돌린다. 캘린더/메일 도구는 안드로이드 화면을
+    // 여는 것이라 여기 없다(:tool-android-intents 는 안드로이드 라이브러리다).
+    implementation(project(":agent-core"))
+    implementation(project(":agent-contract"))
+    implementation(project(":agent-local-gateway"))
+    implementation(project(":tool-contract"))
+    implementation(project(":tool-contact"))
+    implementation(project(":tool-datetime"))
+    implementation(project(":search-core"))
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
 
     // :app 이 aar 로 쓰는 것과 같은 자바 API 의 데스크톱 구현.
     // 인식 코드는 :core-ocr 한 벌이고 런타임만 여기서 바꿔 낀다.

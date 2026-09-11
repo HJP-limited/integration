@@ -17,6 +17,9 @@ dependencies {
     api(project(":agent-contract"))
     // 대상 인물 해소(TurnContactTargetResolver)·이름 마스킹을 그대로 쓴다.
     api(project(":agent-core"))
+    // RepositoryContactDirectory 가 명함 저장소 계약을 쓴다. 앱과 노트북이
+    // **같은 이름 인덱스**를 돌게 하려고 여기 둔다.
+    api(project(":tool-contact"))
     api(project(":tool-contract"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)

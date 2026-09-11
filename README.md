@@ -17,18 +17,43 @@
 
 | 모듈 | 내용 | 플랫폼 |
 |---|---|---|
-| `:core` | 검색·멀티턴 로직. `CardSearchService`, `CardGazetteer`, `AgentSession`, `TurnLogic`(runChat) | 순수 Kotlin/JVM |
+| `:agent-core` | 턴 라우팅·도구 호출 루프. `AgentKernel`, `DeterministicTurnRouter`, `AgentWorkflowPolicy`, `AgentSession` | 순수 Kotlin/JVM |
+| `:agent-contract` | 모델 경계 계약. `AgentModelGateway`, `AgentEvent`, `ConversationMemory` | 순수 Kotlin/JVM |
+| `:tool-contract` | 도구 계약(`ToolPlugin`, `ToolContract`) | 순수 Kotlin/JVM |
+| `:tool-contact` | 명함 도구 — `search_contacts` · `get_contact` · `update_business_card` | 순수 Kotlin/JVM |
+| `:tool-datetime` | `get_current_datetime` | 순수 Kotlin/JVM |
+| `:tool-android-intents` | `create_calendar_event` · `open_compose` (화면을 여는 것까지) | Android |
+| `:search-core` | 검색 엔진 — RRF 융합·필드 제약·RAG 컨텍스트 | 순수 Java |
+| `:agent-local-gateway` | 모델 없이 도구를 고르는 규칙 게이트웨이 + 공용 시스템 프롬프트·이름 인덱스 | 순수 Kotlin/JVM |
 | `:core-ocr` | OCR 검출·인식·KIE. `OcrPipeline`, `KieParser`, `CardParser`, `OcrCardMapper` | 순수 Kotlin/JVM |
 | `:app` | Android — Compose UI, Room, LiteRT-LM, 각 런타임 배선 | Android |
-| `:desktop` | 노트북 러너 — 같은 `:core`/`:core-ocr` 에 데스크톱 런타임을 물린다 | JVM |
+| `:desktop` | 노트북 러너 — 같은 커널·도구·검색에 데스크톱 런타임을 물린다 | JVM |
 
-**로직을 고칠 때는 `:core` / `:core-ocr` 에서 고친다.** `:app` 이나 `:desktop` 에만 넣으면
-두 실행 경로가 갈라지고, 그게 이 구조가 막으려는 실패다.
+에이전트·도구 계층은 `HJP-limited/HJP_dataset_gen_by_v1@Agent_0910` 에서 가져왔다.
+**충돌하면 그쪽이 정본이다.**
+
+**로직은 위쪽 모듈에서 고친다.** `:app` 이나 `:desktop` 에만 넣으면 두 실행 경로가
+갈라지고, 그게 이 구조가 막으려는 실패다.
 
 같은 자바 API 를 안드로이드(aar)와 데스크톱(jar)이 모두 제공하는 점을 이용한다 —
 `:core-ocr` 은 데스크톱 jar 에 `compileOnly` 로 컴파일하고 구현은 소비하는 쪽이 준다.
-저장소·임베더·LLM·자산은 인터페이스(`CardStore`, `TextEmbeddingProvider`,
-`ChatEngineProvider`, `OcrAssets`)로 주입한다.
+저장소·임베더·모델·자산은 인터페이스(`BusinessCardRepository`·`BusinessCardKeywordIndex`·
+`BusinessCardEmbeddingStore`, `EmbeddingEngine`, `AgentModelGateway`, `OcrAssets`)로 주입한다.
+
+## 한 질문이 처리되는 길
+
+```
+질문 → DeterministicTurnRouter (규칙 선판정: 되짚기·지시어·capability)
+     → 모델이 도구를 고름
+         · 앱: Gemma 4 E2B (LiteRT-LM)
+         · 노트북·에뮬레이터: 규칙 게이트웨이(:agent-local-gateway)
+     → 도구 실행 search_contacts / get_contact / update_business_card
+                 / get_current_datetime / create_calendar_event / open_compose
+     → AgentWorkflowPolicy 가 연쇄를 검증 → 답변
+```
+
+**검색은 도구 하나다.** 화면도 같은 백엔드를 부른다 — 목록에서 찾은 사람과 채팅에서 찾은
+사람이 다르면 사용자는 둘 중 무엇을 믿어야 할지 알 수 없다.
 
 ## 빌드와 실행
 
@@ -38,43 +63,38 @@
 # APK (debug 는 에뮬레이터용 x86_64 를 함께 담는다)
 ./gradlew :app:assembleDebug
 
-# 테스트 (147개)
-./gradlew :core:test :core-ocr:test :app:testDebugUnitTest
+# 테스트 (446개)
+./gradlew test :app:testDebugUnitTest :tool-android-intents:testDebugUnitTest
 ```
 
 ### 노트북 러너
 
-실기기 없이 인식·검색·라우팅을 확인한다. 앱과 **같은 코드**가 돈다.
+실기기 없이 **앱과 같은 커널·도구·검색**을 돌린다.
 
 ```bash
-./gradlew :desktop:run --args="ocr <이미지>"         # 명함 한 장 인식
-./gradlew :desktop:run --args="import <이미지>"      # 인식해서 DB 저장 (OCR→검색 연결)
-./gradlew :desktop:run --args="search 판교 개발자"    # 하이브리드 검색
-./gradlew :desktop:run --args="turn 손다은|그 사람 회사" # 멀티턴 (| 로 턴 구분)
-./gradlew :desktop:run --args="turn --llm 손다은 찾아줘|그 사람 회사 어디야"  # 생성까지
+./gradlew :desktop:run --args="ocr <이미지>"          # 명함 한 장 인식
+./gradlew :desktop:run --args="import <이미지>"       # 인식해서 DB 저장 (OCR→검색 연결)
+./gradlew :desktop:run --args="search 판교 개발자"     # 도구가 쓰는 것과 같은 검색 경로
+./gradlew :desktop:run --args="turn 손다은 명함 찾아줘|그 사람 회사 어디야"
+./gradlew :desktop:run --args="turn --yes ...|그 사람 메모를 VIP로 수정해줘"
 ```
 
-기본값은 **생성 없이** 검색·라우팅까지다. 초 단위로 끝나므로 규칙을 고칠 때마다 돌릴 수 있다.
-이 상태로 확인되는 것 — 기능/자기참조/전체개수 우회, 질의 재작성(담화참조·정정·속성이월·
-조건누적), 검색·필드필터·기권.
+`--yes` 는 확인이 필요한 도구(명함 수정)를 승인한다. **기본은 거절**이다 — 노트북에는 확인
+화면이 없는데 자동으로 통과시키면 사용자가 못 본 동의를 대신 눌러 주는 셈이고, 러너 결과가
+실제 앱보다 관대해진다.
 
-`--llm` 을 붙이면 **앱과 같은 Gemma 4 E2B 가 붙어** followup / context_answer 분기와 focus
-인물 치환까지 돈다. `runChat` 이 이 분기를 LLM 로드 뒤에 두기 때문에 생성이 없으면 지나가지
-않는다. 붙이려면 구글 `litert-lm` CLI 의 serve 모드를 띄워 둔다:
+모델 경계만 앱과 다르다. 러너는 규칙 게이트웨이로 도구를 고른다(앱도 에뮬레이터에서는 같은
+것을 쓴다). 그래서 검증되는 범위는:
 
-```bash
-litert-lm import <gemma-4-E2B-it.litertlm> gemma4e2b   # 1회
-litert-lm serve --host 127.0.0.1 --port 9379
-```
+- **된다** — 도구 연쇄(`search_contacts` → `get_contact` → …), 라우팅, 세션·지시어 해소,
+  검색 순위(앱과 같은 FTS4 4단 티어 + RRF)
+- **안 된다** — Gemma 가 문장을 어떻게 쓰는지, 캘린더·메일 화면(안드로이드 전용)
 
-**같은 모델 파일**이지만 앱은 LiteRT-LM 을 인프로세스로, 러너는 HTTP 로 부른다 — 답의 계열은
-같고 실행 경로는 다르다. 서버를 안 띄우면 `modelStatus` 가 `missing:` 을 돌려주고 생성 없이
-검색까지만 돈다(러너가 죽지 않는다). 실측 턴당 10~17초로 에뮬레이터(~80초)보다 빠르다.
+실측 한 턴 20~500ms. 첫 실행은 1.2GB ONNX 임베더를 올리느라 ~10초가 더 걸리는데, 그건
+턴 밖에서 미리 한다 — 도구 실행 제한(10초)에 걸려 첫 턴이 내용과 무관하게 실패했었다.
 
-멀티턴에서 한 가지가 구조적으로 중요하다. **턴이 끝난 뒤 세션 상태를 적는 코드(`recordTurnState`)
-는 `:core` 에 있어야 한다.** 재작성 규칙은 공유 코드인데 그 규칙이 읽는 상태를 앱만 만들면,
-러너는 "그 사람 회사 어디야" 를 재현하지 못한 채 엉뚱한 사람을 데려온다(실제로 그랬다).
-앱과 러너 모두 `runChat` 직후 이 함수를 부른다.
+저장소는 `build/hjp-desktop.db`(SQLite), 시드는 앱과 **같은 파일**(`app/src/main/assets/cards/
+cards_seed.json`, 1000장)을 읽는다. 임베더 위치는 `HJP_EMBED_MODEL_DIR` 로 준다.
 
 ## 검색 구조
 
@@ -87,6 +107,11 @@ litert-lm serve --host 127.0.0.1 --port 9379
 - 하이브리드: 키워드 순위 + 벡터 순위를 **RRF**(`1/(60+rank)`)로 융합. 식별자 질의
   (전화·이메일)는 시맨틱을 빼고 라우팅한다 — 섞으면 P@5 가 1.000 → 0.233 으로 떨어졌다
 - 임베딩: EmbeddingGemma-300M, 768차원
+
+4단 티어는 앱의 `RoomBusinessCardRepository.TieredFtsQuery` 와 러너의
+`SqliteContactRepository` 두 곳에 **같은 순서·같은 동의어 표**로 있고, 그 위의 RRF 융합과
+필드 제약은 `:search-core` 한 곳에 있다. 티어를 고칠 때는 두 곳을 같이 고쳐야 한다 —
+한쪽만 늘리면 같은 질의가 양쪽에서 달라진다.
 
 `:desktop` 은 raw SQLite(JDBC)를 쓰지만 **같은 SQL·같은 FTS4 설정**을 만든다. 폰이 FTS4 를
 쓰니 노트북도 FTS4 를 쓴다 — 토크나이저가 다르면 같은 질의가 양쪽에서 다른 결과를 내고,
@@ -130,7 +155,13 @@ KIE 분류기가 없으면 `CardParser` 정규식 폴백으로 내려간다(라�
   그 좁혀진 목록의 1번을 고른다 — 여러 턴 전 목록으로 거슬러 올라가지 않는다.
   (실측: 2명 → "두 번째 사람 연락처" → "그 사람 회사" → "아니 첫 번째 사람" 이 원래 1번이 아닌
   직전 1장을 가리킴.) 앱·러너 동작은 같다.
-- **SCR-01 로그인은 화면만** 있고 인증 백엔드가 없다. **SCR-08 메일 초안**은 미구현.
+- **SCR-01 로그인은 화면만** 있고 인증 백엔드가 없다.
+- **도구를 고르는 정확도는 82.12%** (Agent_0910 의 A-15 E-3.2 실측: 400시나리오/1,918턴,
+  Gemma 4 E2B, 안드로이드 GPU). 인자 정확도 93.93%, 과제 전체 성공률 41.75% —
+  여러 턴에 걸쳐 도구를 이어 쓰는 시나리오에서 중간에 끊긴다. `docs/` 참조.
+- **도구 연쇄 시험 4건이 꺼져 있다**(`@Ignore`). 셋은 라우터가 검색으로 분류한 문장을
+  게이트웨이 파서가 못 읽어 도구를 하나도 안 부르는 경우, 하나는 워크플로 정책이 정당하게
+  끝난 턴을 미완으로 보고 재촉하는 경우다. 각 `@Ignore` 에 진단을 적어 두었다.
 - 전화·지도 인텐트는 상대 앱이 자기 태스크로 열려 뒤로가기로 돌아오지 않는다(안드로이드
   기본 동작). Gmail 은 외부 호출용 액티비티라 돌아온다.
 

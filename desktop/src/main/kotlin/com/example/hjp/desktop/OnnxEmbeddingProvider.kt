@@ -4,8 +4,7 @@ import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
-import com.example.hjp.search.TextEmbeddingProvider
-import com.example.hjp.search.normalize
+import com.hjp.searchlookup.EmbeddingEngine
 import java.io.File
 import java.nio.LongBuffer
 
@@ -23,15 +22,20 @@ import java.nio.LongBuffer
  * 파일 `model.onnx_data` 가 같은 폴더에 있어야 한다) + `tokenizer.json`.
  * 그래프가 pooling·Dense·normalize 까지 포함해 `sentence_embedding`[batch,768] 을 직접 낸다.
  */
-class OnnxEmbeddingProvider(modelDir: File) : TextEmbeddingProvider {
+class OnnxEmbeddingProvider(modelDir: File) : EmbeddingEngine, AutoCloseable {
 
     private var session: OrtSession? = null
     private var tokenizer: HuggingFaceTokenizer? = null
     private var status: String = "not initialized"
 
-    override val name: String = "EmbeddingGemma ONNX (${modelDir.name})"
-    override val isModelBacked: Boolean get() = session != null
-    override val diagnosticStatus: String get() = status
+    private val engineName: String = "EmbeddingGemma ONNX (" + modelDir.name + ")"
+
+    override fun name(): String = engineName
+
+    /** 모델이 실제로 떠 있을 때만 참. 아니면 호출한 쪽이 키워드 검색으로 내려간다. */
+    override fun isModelBacked(): Boolean = session != null
+
+    override fun diagnosticStatus(): String = status
 
     init {
         val model = File(modelDir, "onnx/model.onnx")
@@ -52,11 +56,14 @@ class OnnxEmbeddingProvider(modelDir: File) : TextEmbeddingProvider {
         }
     }
 
-    override fun embedQuery(text: String): FloatArray = embed(QUERY_PROMPT + text)
+    override fun embed(input: String): FloatArray = embedQuery(input)
 
-    override fun embedDocument(text: String): FloatArray = embed(DOCUMENT_PROMPT + text)
+    override fun embedQuery(text: String): FloatArray = embed0(QUERY_PROMPT + text)
 
-    private fun embed(text: String): FloatArray {
+    override fun embedDocument(text: String): FloatArray = embed0(DOCUMENT_PROMPT + text)
+
+
+    private fun embed0(text: String): FloatArray {
         val ort = session ?: throw IllegalStateException("EmbeddingGemma is not loaded: $status")
         val tok = tokenizer ?: throw IllegalStateException("tokenizer is not loaded: $status")
         val encoding = tok.encode(text)
@@ -73,7 +80,7 @@ class OnnxEmbeddingProvider(modelDir: File) : TextEmbeddingProvider {
                     val rows = tensor.value as Array<FloatArray>
                     // 그래프가 이미 정규화하지만, 앱과 같은 코드로 한 번 더 통과시켜
                     // 코사인 계산 전제(단위 벡터)를 두 경로에서 동일하게 만든다.
-                    return normalize(rows[0].copyOf())
+                    return unitVector(rows[0].copyOf())
                 }
             }
         }
@@ -82,6 +89,19 @@ class OnnxEmbeddingProvider(modelDir: File) : TextEmbeddingProvider {
     override fun close() {
         session?.close()
         tokenizer?.close()
+    }
+
+    /**
+     * 단위 벡터로 맞춘다. 그래프가 이미 정규화하지만 한 번 더 통과시켜, 코사인 계산의
+     * 전제(길이 1)를 앱과 노트북 두 경로에서 똑같이 만든다.
+     */
+    private fun unitVector(v: FloatArray): FloatArray {
+        var sum = 0.0
+        for (x in v) sum += x.toDouble() * x
+        val norm = kotlin.math.sqrt(sum).toFloat()
+        if (norm <= 0f) return v
+        for (i in v.indices) v[i] = v[i] / norm
+        return v
     }
 
     companion object {

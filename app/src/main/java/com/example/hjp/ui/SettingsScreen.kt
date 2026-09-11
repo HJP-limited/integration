@@ -91,9 +91,15 @@ fun SettingsScreen(
             )
         }
 
+        SettingsSection("에이전트가 할 수 있는 일") {
+            SettingsRow(HjpIcons.SEARCH, "명함 검색 · 상세 조회", "search_contacts · get_contact")
+            SettingsRow(HjpIcons.EDIT, "명함 수정", "update_business_card — 확인 후 적용")
+            SettingsRow(HjpIcons.MAIL, "메일 · 문자 초안", "open_compose — 화면만 열고 전송은 사용자가")
+            SettingsRow(HjpIcons.AGENT, "일정 등록", "create_calendar_event — 저장은 사용자가")
+        }
+
         SettingsSection("아직 없는 기능") {
             SettingsRow(HjpIcons.LOCK, "계정 · 로그인", "미구현 (SCR-01)")
-            SettingsRow(HjpIcons.MAIL, "Gmail 연동 · 메일 초안", "미구현 (SCR-08)")
             SettingsRow(HjpIcons.STAR, "즐겨찾기 · 태그 편집", "미구현")
         }
     }
