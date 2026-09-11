@@ -429,64 +429,8 @@ internal fun ChatScreen(
                     listOf("search_business_cards")
                 }
                 session.recordTurn(turnId, question, result.answer, executedTools)
-                // 질문이 실제로 이름을 지목했으면 그 이름을 지칭 대상으로 삼는다(우선).
-                // 그런 이름이 없으면(대명사/생략형 후속) 검색 1등 카드로 대체 — 새 개념
-                // 검색("판교 AI개발자 찾아줘")에서도 focus가 정상적으로 잡히게.
-                // "검색 1등이면 무조건 focus"였던 예전 방식은 유사 이름 오매칭 시
-                // focus가 엉뚱한 사람으로 튀는 문제가 있었다(실기기에서 발견).
-                val resultNames = result.search?.results?.map { it.card.name }?.distinct().orEmpty()
-                val namedInQuestion = resultNames.firstOrNull { name -> question.contains(name) }
-                (namedInQuestion ?: resultNames.firstOrNull())?.let { focusName ->
-                    session.putToolContext(AgentSession.KEY_FOCUS_PERSON, focusName)
-                    // 그 인물의 회사도 같이 기억한다 — "그 회사 다니는 사람 또 있어?" 처럼
-                    // 회사 자체를 가리키는 후속 질의를 풀려면 이름만으로는 안 된다.
-                    result.search?.results?.firstOrNull { it.card.name == focusName }?.card?.company
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { session.putToolContext(AgentSession.KEY_FOCUS_COMPANY, it) }
-                    // 담화 순서 지시("처음에 물어본 사람")를 풀려면 최근 창 밖의 인물도
-                    // 알아야 한다. focus 는 매 턴 그 턴의 주인공이므로 그대로 쌓으면
-                    // '대화에 등장한 순서'가 된다.
-                    session.putToolContext(
-                        AgentSession.KEY_SUBJECT_HISTORY,
-                        appendSubject(session.toolContextValue(AgentSession.KEY_SUBJECT_HISTORY), focusName),
-                    )
-                }
-                // 정정/확인 발화가 아니었을 때만 근거 카드를 갱신한다
-                // (정정 턴은 직전 근거를 그대로 유지해야 대화가 이어진다).
-                if (!result.conversationalFollowup) {
-                    val ids = result.search?.results?.map { it.card.id }.orEmpty()
-                    session.putToolContext(
-                        AgentSession.KEY_LAST_CARD_IDS,
-                        ids.joinToString(",").ifBlank { null },
-                    )
-                    session.putToolContext(AgentSession.KEY_LAST_QUERY, question)
-                    // 이름이 한 장으로 좁혀졌으면 그 짝을 기억한다(동명이인 되부르기).
-                    // 회사로 특정한 턴("샤인기계 백다인씨")이 여기 해당한다.
-                    val only = result.search?.results?.singleOrNull()?.card
-                    if (only != null && question.contains(only.name.orEmpty())) {
-                        session.putToolContext(
-                            AgentSession.KEY_SUBJECT_CARDS,
-                            appendSubjectCard(
-                                session.toolContextValue(AgentSession.KEY_SUBJECT_CARDS),
-                                only.name.orEmpty(), only.id,
-                            ),
-                        )
-                    }
-                }
-                // 이번 턴이 물어본 속성을 남겨 둔다 — 다음 턴이 "○○씨는?" 처럼
-                // 속성을 생략하면 여기서 이어받는다. 속성이 없는 질문이면
-                // 이전 값을 그대로 둬서 대화 흐름을 유지한다.
-                attributeOf(question)?.let {
-                    session.putToolContext(AgentSession.KEY_LAST_ATTRIBUTE, it)
-                }
-                // 이번 턴에 걸린 필드 조건어를 남긴다 — 다음 턴이 "그중에 …" 로
-                // 좁히면 여기서 이어받는다. 조건이 없었으면 이전 값을 유지한다.
-                result.search?.fieldFilters?.let { f ->
-                    val terms = (f.names + f.locations + f.titles).joinToString(" ")
-                    if (terms.isNotBlank()) {
-                        session.putToolContext(AgentSession.KEY_LAST_FILTER_TERMS, terms)
-                    }
-                }
+                // 다음 턴의 재작성이 읽을 세션 상태를 남긴다(:core 공유 — 데스크톱 러너도 같은 것을 쓴다).
+                recordTurnState(session, question, result)
                 messages.add(
                     ChatMessage(
                         isUser = false,

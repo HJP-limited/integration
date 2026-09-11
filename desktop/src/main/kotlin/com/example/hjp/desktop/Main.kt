@@ -10,6 +10,7 @@ import com.example.hjp.ocr.KieParser
 import com.example.hjp.ocr.OcrAssets
 import com.example.hjp.ocr.OcrCardMapper
 import com.example.hjp.ocr.OcrPipeline
+import com.example.hjp.recordTurnState
 import com.example.hjp.runChat
 import com.example.hjp.search.CardSearchService
 import com.example.hjp.search.NoEmbeddingProvider
@@ -37,17 +38,29 @@ class FileSeedSource(private val dir: File) : SeedSource {
 }
 
 /**
- * 생성 모델이 없는 러너. 두 역할 모두 "missing:" 을 돌려주므로 [runChat] 이 LLM 을 부르지
+ * 생성 모델을 안 쓰는 러너. 두 역할 모두 "missing:" 을 돌려주므로 [runChat] 이 LLM 을 부르지
  * 않고 검색 결과까지만 만든다.
  *
  * 이게 쓸모 있는 이유: 멀티턴 평가의 1~3층(라우팅·슬롯·턴별 R@5)은 **생성이 필요 없다**.
- * 그 층들은 규칙 변경마다 돌려야 하는데, 노트북에서 LLM 없이 초 단위로 끝난다.
+ * 그 층들은 규칙 변경마다 돌려야 하는데, 생성을 빼면 초 단위로 끝난다.
  */
 private object NoChatEngineProvider : ChatEngineProvider {
-    override fun modelStatus(role: LlmRole) = "missing: desktop runner has no generative model"
+    override fun modelStatus(role: LlmRole) = "missing: generation disabled (--llm 으로 켠다)"
     override fun openShared(role: LlmRole): ChatEngine =
-        throw IllegalStateException("desktop runner has no generative model")
+        throw IllegalStateException("generation disabled")
 }
+
+/**
+ * `--llm` 이 붙으면 litert-lm serve 에 붙고, 아니면 생성을 끈다.
+ *
+ * 생성을 켜면 followup / context_answer 분기와 focus 인물 치환까지 지나간다 — 그 분기들이
+ * runChat 에서 LLM 로드 **뒤에** 있기 때문이다. 끄면 그 층은 검증되지 않는다.
+ */
+private fun chatEngines(useLlm: Boolean): ChatEngineProvider =
+    if (useLlm) LiteRtLmServerEngineProvider(
+        baseUrl = System.getenv("HJP_LLM_URL") ?: LiteRtLmServerEngineProvider.DEFAULT_BASE_URL,
+        modelId = System.getenv("HJP_LLM_MODEL") ?: LiteRtLmServerEngineProvider.DEFAULT_MODEL_ID,
+    ) else NoChatEngineProvider
 
 /**
  * 저장소 루트. `gradle :desktop:run` 은 작업 디렉터리가 모듈 폴더라 상대경로가 조용히
@@ -70,14 +83,18 @@ private fun usage(): Nothing {
 
           ocr <이미지> [모델디렉터리]      명함 한 장 인식 (기본: $DEFAULT_MODEL_DIR)
           search <질의>                   하이브리드 검색 (SQLite FTS, 앱과 같은 SQL)
-          turn <질의1>|<질의2>|…           멀티턴 — 한 세션으로 연속 처리 ('|' 로 구분)
+          turn [--llm] <질의1>|<질의2>|…   멀티턴 — 한 세션으로 연속 처리 ('|' 로 구분)
           import <이미지> [모델디렉터리]   인식해서 DB 에 저장 (OCR→검색 연결 확인)
 
-        생성 모델은 싣지 않는다. 그래서 turn 이 검증하는 범위는:
+        turn 은 기본적으로 생성을 끄고 돈다(초 단위). 그 상태에서 검증되는 범위:
           O  기능/자기참조/전체개수/조건개수 우회, 질의 재작성(담화참조·정정·속성이월·조건누적),
              검색·필드필터·기권
-          X  followup/context_answer 분기와 focus 인물 치환 — 이들은 코드상 LLM 로드 이후라
-             모델 없이는 지나가지 않는다. 그 층은 실기기나 litert-lm 러너가 필요하다.
+          X  followup/context_answer 분기와 focus 인물 치환 — 코드상 LLM 로드 뒤에 있다
+
+        --llm 을 붙이면 앱과 같은 모델(Gemma 4 E2B)로 위 X 까지 지나간다. 먼저 서버를 띄운다:
+          litert-lm import <gemma-4-E2B-it.litertlm> gemma4e2b   # 1회
+          litert-lm serve --host 127.0.0.1 --port 9379
+        주소·모델 id 는 HJP_LLM_URL / HJP_LLM_MODEL 로 바꿀 수 있다.
 
         DB: $DEFAULT_DB · 시드: $DEFAULT_SEED_DIR
         """.trimIndent()
@@ -208,10 +225,16 @@ private fun runSearch(args: List<String>) {
  */
 private fun runTurns(args: List<String>) {
     if (args.isEmpty()) usage()
+    val useLlm = args.contains("--llm")
     // Gradle 의 --args 는 공백으로 쪼개서 넘긴다. 질문마다 공백이 있으므로 다시 이어 붙인 뒤
     // '|' 로 나눈다 — 안 그러면 낱말 하나가 턴 하나가 된다.
-    val questions = args.joinToString(" ").split("|").map { it.trim() }.filter { it.isNotEmpty() }
+    val questions = args.filterNot { it == "--llm" }
+        .joinToString(" ").split("|").map { it.trim() }.filter { it.isNotEmpty() }
     if (questions.isEmpty()) usage()
+
+    val engines = chatEngines(useLlm)
+    println("생성: ${engines.modelStatus(LlmRole.Chat)}")
+    println()
 
     openSearch().use { search ->
         val session = AgentSession()
@@ -219,7 +242,9 @@ private fun runTurns(args: List<String>) {
         questions.forEachIndexed { index, question ->
             val turnId = "t${index + 1}"
             session.beginTurn(turnId, question)
-            val result = runChat(search, NoChatEngineProvider, tools, question, session)
+            val startedAt = System.currentTimeMillis()
+            val result = runChat(search, engines, tools, question, session)
+            val elapsed = System.currentTimeMillis() - startedAt
             val cards = result.search?.results.orEmpty()
             println("[$turnId] $question")
             // 검색에 실제로 들어간 질의. 앞 턴을 물어 재작성됐으면 원문과 달라진다.
@@ -227,8 +252,10 @@ private fun runTurns(args: List<String>) {
             if (!resolved.isNullOrBlank() && resolved != question) {
                 println("      재작성 → $resolved")
             }
-            println("      route=${result.route ?: "search(생성없음)"} · 후보 ${cards.size}건")
+            println("      route=${result.route ?: "search"} · 후보 ${cards.size}건 · ${elapsed}ms")
             cards.take(3).forEach { println("        - ${it.card.name} · ${it.card.company}") }
+            // 생성을 켰을 때만 답변이 의미 있다. 껐으면 고정 안내 문구라 찍지 않는다.
+            if (useLlm) println("      답변: ${result.answer.replace('\n', ' ').take(120)}")
             result.error?.let { println("      error=$it") }
             session.recordTurn(
                 turnId = turnId,
@@ -238,6 +265,10 @@ private fun runTurns(args: List<String>) {
                 executedTools = if (result.conversationalFollowup) emptyList()
                 else listOf("search_business_cards"),
             )
+            // 다음 턴의 재작성이 읽을 상태(focus 인물·회사, 직전 카드, 속성, 조건어).
+            // 앱과 **같은 함수**를 쓴다 — 예전에는 이게 앱에만 있어서 러너가 후속 발화를
+            // 재현하지 못했다.
+            recordTurnState(session, question, result)
             println()
         }
     }
