@@ -1,141 +1,121 @@
-# HJP Agent Search Demo
+# HJP — 온디바이스 명함 서비스 (OCR + 검색 + 멀티턴 에이전트)
 
-Android 온디바이스 기준으로 **명함 탭 빠른 키워드 검색**과 **에이전트 하이브리드 검색/RAG retrieval**을 분리한 검색 모듈입니다. 기존 ONNX Runtime 기반 `OnDeviceEmbeddingEngine` 구조와 `LocalEmbeddingEngine` fallback은 유지합니다.
+명함을 찍어 저장하고, 자연어로 찾고, 대화로 이어 묻는 앱. **네트워크 없이 기기 안에서** 돈다.
 
-## 전체 구조
+따로 개발되던 세 트랙(OCR · 검색 · 멀티턴 에이전트)을 하나로 합친 저장소다.
 
-- `BusinessCardRepository`: 명함 원본 데이터와 `CardEmbedding` 저장소 경계입니다.
-- `QueryAnalyzer`: 사용자 query를 `rawQuery`, `normalizedQuery`, `keywordQuery`, `semanticQuery`, `tokens`로 분석합니다.
-- `KeywordRetriever`: DB 구현이 Room FTS4, raw SQLite FTS5, LIKE fallback으로 바뀌어도 `RetrievalService` 영향이 작도록 만든 keyword retrieval 인터페이스입니다.
-- `SemanticRetriever`: `QueryAnalysis.semanticQuery`를 embedding으로 변환하고 저장된 card embedding과 cosine similarity로 semantic ranking을 만듭니다.
-- `ReciprocalRankFusion`: keyword ranking과 semantic ranking을 `1 / (60 + rank)` 공식으로 결합합니다. keyword score와 semantic score를 직접 더하지 않습니다.
-- `RagContextBuilder`: LLM prompt에 넣을 최소 명함 context를 만듭니다.
-
-## 명함 탭 검색 vs 에이전트 하이브리드 검색
-
-### 명함 탭 검색
-
-짧은 키워드 입력을 대상으로 하는 빠른 검색입니다. 이름, 회사명, 직책, 부서, 산업/태그, 메모 등 `searchableText` 기반으로 찾으며 embedding, RRF, RAG context를 사용하지 않습니다.
-
-```java
-List<SearchResult> results = service.searchCardTab("코어AI 개발", SortOption.RELEVANCE, 20);
+```
+촬영/갤러리 → OCR(PP-OCRv5) → KIE 필드분류(MiniLM) → 확인 → 명함 DB 저장
+                                                              ↓
+          자연어 질문 → 질의 재작성 → 하이브리드 검색(FTS + 임베딩) → Gemma 답변
 ```
 
-### 에이전트 하이브리드 검색
+## 모듈 구조
 
-자연어 query를 대상으로 합니다.
+이 프로젝트의 제약은 **"노트북에서 잰 결과가 폰을 대변해야 한다"** 는 것이다. 그래서 규칙과
+상수가 한 곳에만 있도록 갈랐다.
 
-```text
-사용자 자연어 query
-→ QueryAnalyzer
-→ KeywordRetriever keyword retrieval
-→ SemanticRetriever query embedding + vector retrieval
-→ ReciprocalRankFusion RRF 결합
-→ RagContextBuilder
-→ RetrievalResponse
-```
+| 모듈 | 내용 | 플랫폼 |
+|---|---|---|
+| `:core` | 검색·멀티턴 로직. `CardSearchService`, `CardGazetteer`, `AgentSession`, `TurnLogic`(runChat) | 순수 Kotlin/JVM |
+| `:core-ocr` | OCR 검출·인식·KIE. `OcrPipeline`, `KieParser`, `CardParser`, `OcrCardMapper` | 순수 Kotlin/JVM |
+| `:app` | Android — Compose UI, Room, LiteRT-LM, 각 런타임 배선 | Android |
+| `:desktop` | 노트북 러너 — 같은 `:core`/`:core-ocr` 에 데스크톱 런타임을 물린다 | JVM |
 
-LLM 담당자는 아래 API를 호출하면 top 명함 결과와 ragContext를 받을 수 있습니다.
+**로직을 고칠 때는 `:core` / `:core-ocr` 에서 고친다.** `:app` 이나 `:desktop` 에만 넣으면
+두 실행 경로가 갈라지고, 그게 이 구조가 막으려는 실패다.
 
-```java
-RetrievalResponse response = retrievalService.retrieve(userQuery, 5);
-RetrievalResponse responseWithMode = service.retrieve(userQuery, 5, RetrievalMode.HYBRID);
-```
+같은 자바 API 를 안드로이드(aar)와 데스크톱(jar)이 모두 제공하는 점을 이용한다 —
+`:core-ocr` 은 데스크톱 jar 에 `compileOnly` 로 컴파일하고 구현은 소비하는 쪽이 준다.
+저장소·임베더·LLM·자산은 인터페이스(`CardStore`, `TextEmbeddingProvider`,
+`ChatEngineProvider`, `OcrAssets`)로 주입한다.
 
-`RetrievalResponse`는 `results`, `ragContext`, `queryAnalysis`, `mode`, `cardIds`, `keywordResultCount`, `semanticResultCount`, `fallbackUsed`를 포함합니다.
+## 빌드와 실행
 
-## QueryAnalyzer 역할
-
-기본 정규화는 `trim`, lower-case 가능한 언어의 lower-case, 연속 공백 정리, 검색에 불필요한 특수문자 정리를 포함합니다. 한글/영문/숫자와 이메일/전화번호에 자주 쓰이는 `@`, `.`, `_`, `+`, `-` 등은 최대한 보존합니다.
-
-## KeywordRetriever 구현 전략
-
-현재 포함된 구현/adapter는 다음과 같습니다.
-
-- `LikeFallbackKeywordRetriever`: 현재 in-memory/일반 테이블 기반에서도 동작하는 fallback입니다. 명함 탭 검색과 agent keyword 후보 생성에 바로 사용할 수 있습니다.
-- `RoomFtsKeywordRetriever`: Room DB 담당자가 연결할 FTS4 adapter placeholder입니다.
-- `SqliteFts5KeywordRetriever`: raw SQLite FTS5 + trigram tokenizer 검토용 adapter placeholder입니다.
-
-### Room DB / SQLite FTS 전략
-
-- Room 일반 테이블(`business_cards`)은 명함 원본 데이터를 저장합니다.
-- FTS 테이블은 검색용 `searchableText` 인덱스를 저장합니다.
-- Room 사용 시 우선 `FTS4 + unicode61 tokenizer + prefix index`를 고려합니다.
-- Room FTS4에서 짧은 token/부분 문자열 매칭이 부족하면 `LIKE` fallback을 병행합니다.
-- FTS5를 직접 사용할 수 있는 raw SQLite 경로에서는 `trigram tokenizer`를 검토합니다.
-- FTS 미사용 또는 미지원 환경에서는 `LikeFallbackKeywordRetriever`를 사용합니다.
-- 최종 Room FTS 적용 방식은 DB 담당자와 협의가 필요합니다.
-
-## searchableText 기준과 개인정보 최소화
-
-`BusinessCard.searchableText()`는 `name`, `nameEn`, `company`, `title`, `department`, `industry`, `location`, `memo`, `tags`를 포함합니다. 기본 RAG context는 이름, 회사, 직책, 부서, 산업/태그, 메모, 검색에 필요한 설명 중심이며 전화번호, 이메일, 상세 주소를 과도하게 넣지 않습니다. 상세 정보는 `getCard(cardId)`로 별도 조회합니다.
-
-## EmbeddingGemma ONNX assets
-
-대용량 모델 파일은 Git에 올리지 않습니다. 실제 배치 위치는 아래입니다.
-
-```text
-app/src/main/assets/models/embeddinggemma.onnx
-app/src/main/assets/tokenizer/
-```
-
-추적되는 파일은 `.gitkeep`뿐입니다. `*.onnx`, `*.safetensors`, `*.tflite`, `*.task`, `tokenizer.json`, `tokenizer.model`, `tokenizer_config.json` 등은 ignore 상태로 유지합니다.
-
-`app/build.gradle.kts`의 `androidResources { noCompress += "onnx" }` 설정은 Android asset에 포함된 ONNX 파일을 압축하지 않아 ONNX Runtime이 효율적으로 읽게 하기 위한 설정입니다.
-
-## 현재 확인된 것
-
-1. ONNX 모델 변환 완료.
-2. 로컬 assets에 모델 포함 시 `assembleDebug` 성공.
-3. 실제 기기 ONNX Runtime 추론은 추가 테스트가 필요합니다.
-
-`OnDeviceEmbeddingEngine.production()`은 production 경로이며, 실제 모델/토크나이저가 준비되지 않은 JVM demo 환경에서는 fallback 사용 여부를 `RetrievalResponse.fallbackUsed`로 노출합니다.
-
-## Demo / evaluator
+요구사항: **JDK 21**, Android SDK(`compileSdk 36`), Gradle wrapper 동봉.
 
 ```bash
-javac -d /tmp/hjp-classes $(find src/main/java -name '*.java')
-java -cp /tmp/hjp-classes com.hjp.searchlookup.SearchExample
+# APK (debug 는 에뮬레이터용 x86_64 를 함께 담는다)
+./gradlew :app:assembleDebug
+
+# 테스트 (147개)
+./gradlew :core:test :core-ocr:test :app:testDebugUnitTest
 ```
 
-`SearchExample`은 명함 탭 단순 키워드 검색, 에이전트 하이브리드 검색, QueryAnalyzer 결과, keyword retrieval 후보, semantic retrieval 후보, RRF 최종 결과, ragContext, `getCard(cardId)` 상세 조회, evaluator 결과를 출력합니다.
+### 노트북 러너
 
-## Room DB 연동 기준
+실기기 없이 인식·검색·라우팅을 확인한다. 앱과 **같은 코드**가 돈다.
 
-검색 모듈은 DB 담당 팀원의 Room DB 참고 파일을 기준으로 연결 구조를 맞췄다.
+```bash
+./gradlew :desktop:run --args="ocr <이미지>"         # 명함 한 장 인식
+./gradlew :desktop:run --args="import <이미지>"      # 인식해서 DB 저장 (OCR→검색 연결)
+./gradlew :desktop:run --args="search 판교 개발자"    # 하이브리드 검색
+./gradlew :desktop:run --args="turn 손다은|그 사람 회사" # 멀티턴 (| 로 턴 구분)
+```
 
-참고한 파일:
-- imported/sojung_room_data/BusinessCardEntity.kt
-- imported/sojung_room_data/BusinessCardDao.kt
-- imported/sojung_room_data/HjpDatabase.kt
-- imported/sojung_room_data/RoomBusinessCardStore.kt
-- imported/sojung_room_data/BusinessCard.kt
+생성 모델은 싣지 않는다. `turn` 이 검증하는 범위:
 
-현재 SearchExample은 in-memory demo data로 실행된다.  
-실제 앱에서는 RoomBusinessCardStore 또는 BusinessCardDao에서 가져온 BusinessCardEntity를 검색 도메인 BusinessCard로 변환한 뒤 RetrievalService에 주입하면 된다.
+- **된다** — 기능/자기참조/전체개수 우회, 질의 재작성(담화참조·정정·속성이월·조건누적),
+  검색·필드필터·기권
+- **안 된다** — followup / context_answer 분기와 focus 인물 치환. `runChat` 이 이 분기를
+  LLM 로드 **뒤에** 두어서 모델 없이는 지나가지 않는다. 그 층은 실기기가 필요하다.
 
-Room 일반 테이블은 명함 원본 데이터를 저장하고, FTS 테이블은 검색용 searchableText 인덱스를 저장하는 구조를 기준으로 한다.
+## 검색 구조
 
-검색용 searchableText 우선 포함 필드:
-- name
-- company
-- title 또는 position
-- department
-- memo
-- tags
-- industry 또는 category
-- location
+**Room 은 SQLite 다.** 별개의 선택지가 아니라 SQLite 위의 계층이고, 우리는 그 위에서 돈다.
 
-기본 RAG context에는 개인정보 보호를 위해 phone, email, detailed address를 과도하게 포함하지 않는다.  
-상세 정보는 getCard(cardId)를 통해 별도 조회한다.
+- 원본 테이블 `business_cards` + FTS 테이블 `business_cards_fts`
+- `@Fts4(tokenizer = unicode61, prefix = {2,3,4})` — 오프라인 평가에서 기본 토크나이저보다
+  Recall@1 / MRR 이 뚜렷이 높았고, 특히 전화번호 조회가 0.19 → 1.00 으로 올랐다
+- 키워드 4단 티어: 정확 구문 → 전체 단어 AND → 접두어 AND → LIKE 폴백(동의어 확장)
+- 하이브리드: 키워드 순위 + 벡터 순위를 **RRF**(`1/(60+rank)`)로 융합. 식별자 질의
+  (전화·이메일)는 시맨틱을 빼고 라우팅한다 — 섞으면 P@5 가 1.000 → 0.233 으로 떨어졌다
+- 임베딩: EmbeddingGemma-300M, 768차원
 
-Room 사용 시에는 FTS4 + unicode61 tokenizer + prefix index를 우선 고려한다.  
-FTS4에서 짧은 token 또는 부분 문자열 매칭이 부족하면 LIKE fallback을 병행한다.  
-FTS5 trigram은 raw SQLite 사용 시 검토한다.
+`:desktop` 은 raw SQLite(JDBC)를 쓰지만 **같은 SQL·같은 FTS4 설정**을 만든다. FTS5 나 다른
+토크나이저를 쓰면 같은 질의가 폰과 노트북에서 다른 결과를 내고, 그 순간 노트북 지표는
+앱을 대변하지 못한다. (Room 에는 `@Fts5` 애너테이션이 없다. raw SQL 로 만들 수는 있으나
+플랫폼 SQLite 의 FTS5 지원이 기기마다 갈려 minSdk 24 에서는 택하지 않았다.)
 
-현재 구조:
-- 명함 탭 검색: QueryAnalyzer + LikeFallbackKeywordRetriever 기반 단순 키워드 검색
-- 에이전트 검색: QueryAnalyzer → KeywordRetriever → SemanticRetriever → ReciprocalRankFusion → RagContextBuilder → RetrievalResponse
-- DB 교체 지점: KeywordRetriever / BusinessCardRepository
-- 실제 DB 연결 지점: BusinessCardDao 또는 RoomBusinessCardStore → BusinessCard 변환 → RetrievalService 주입
+## 모델
 
+| 모델 | 크기 | 위치 | 저장소 포함 |
+|---|---|---|---|
+| PP-OCRv5 det / rec | 4.7M / 13M | `app/src/main/assets/ocr/` | O |
+| KIE 토크나이저 · 라벨 | 4.9M / 208B | 〃 | O |
+| KIE 분류기 `kie_minilm_int8.onnx` | 113M | 〃 | **X** — `docs/OCR_ASSETS.md` 참조 |
+| Gemma 4 E2B (대화) | 2.4G | 기기 `files/models/` 에 push | X |
+| FunctionGemma 270M (도구) | 276M | 〃 | X |
+| EmbeddingGemma 300M (`.tflite`) | 171M | 〃 | X |
+| EmbeddingGemma ONNX (노트북용) | 1.2G | `HJP_EMBED_MODEL_DIR` | X |
+
+KIE 분류기가 없으면 `CardParser` 정규식 폴백으로 내려간다(라인 정확도 98.0% → 85.3%).
+임베더가 없으면 키워드 검색으로 폴백한다.
+
+### 노트북 임베딩
+
+안드로이드는 EmbeddingGemma 를 `.tflite` + AI Edge RAG SDK 로 돌리는데 그 SDK 네이티브가
+**arm64 전용**이라 x86_64(노트북·에뮬레이터)에서는 못 쓴다. 그래서 `:desktop` 만 ONNX
+런타임을 쓴다 — 모델과 전처리는 같다.
+
+정합 실측: 앱에 번들된 사전 계산 벡터와 **코사인 1.0000**. 결정적이었던 두 가지 —
+태스크 프리픽스(`"task: search result | query: "` / `"title: none | text: "`)를 직접 붙여야
+하고(안드로이드는 SDK 가 자동으로 붙인다), 토크나이저는 `tokenizer.json` 을 그대로 읽는
+구현을 써야 한다. 자세한 건 `desktop/.../OnnxEmbeddingProvider.kt` 주석에 있다.
+
+## 알려진 한계
+
+- **APK 289MB** (debug + x86_64 는 395MB). KIE 를 vocab trim 본(36.6M)으로 바꾸면 약 203MB.
+- **에뮬레이터에서 벡터 검색이 빠진다** — EmbeddingGemma 네이티브가 arm64 전용. 실기기는 정상.
+- **SCR-01 로그인은 화면만** 있고 인증 백엔드가 없다. **SCR-08 메일 초안**은 미구현.
+- 전화·지도 인텐트는 상대 앱이 자기 태스크로 열려 뒤로가기로 돌아오지 않는다(안드로이드
+  기본 동작). Gmail 은 외부 호출용 액티비티라 돌아온다.
+
+## 문서
+
+- `docs/OCR_ASSETS.md` — OCR/KIE 모델 출처와 재생성 절차
+- `docs/검색_구조_설명.md`, `docs/멀티턴_인수인계.md` — 검색·멀티턴 설계 배경
+- `docs/성능지표.md` — 평가 지표
+- `scripts/eval_multiturn.py`, `scripts/hybrid_server.py` — 파이썬 미러. **Kotlin 이 정본이다.**
+  `:desktop` 러너가 같은 Kotlin 코드를 노트북에서 돌리므로 새 작업은 그쪽을 쓴다.
+  파이썬 쪽은 130시나리오/377턴 평가 자산 때문에 남겨 둔 것이다.
