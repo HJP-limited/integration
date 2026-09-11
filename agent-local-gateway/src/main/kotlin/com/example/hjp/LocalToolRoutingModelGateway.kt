@@ -9,10 +9,12 @@ import com.hjp.agent.contract.ModelInput
 import com.hjp.agent.contract.ModelSessionConfig
 import com.hjp.agent.contract.ModelToolCall
 import com.hjp.agent.contract.ModelToolResponse
+import com.hjp.agent.contract.ModelWorkflowNote
 import com.hjp.agent.core.CardUpdateIntent
 import com.hjp.agent.core.ContactReadIntent
 import com.hjp.agent.core.CurrentDateTimeIntent
 import com.hjp.agent.core.PersonNameMask
+import com.hjp.agent.core.ContactAnaphora
 import com.hjp.agent.core.TurnContactTargetResolver
 import java.time.DateTimeException
 import java.time.LocalDate
@@ -48,25 +50,63 @@ private class LocalToolRoutingModelSession(
     private var pendingAction: PendingAction? = null
     private var turnContext: com.hjp.agent.contract.TurnContext? = null
 
-    override suspend fun decide(input: ModelInput): ModelDecision = when (input) {
-        is ModelInput.User -> routeUserInput(input)
+    /** 마지막으로 사용자에게 내놓은 답. 워크플로 재촉이 들어왔을 때 되돌려 줄 값이다. */
+    private var lastFinalText: String? = null
+
+    override suspend fun decide(input: ModelInput): ModelDecision = remember(
+        when (input) {
+            is ModelInput.User -> routeUserInput(input)
+        }
+    )
+
+    /**
+     * 이미 끝난 턴을 워크플로가 다시 재촉해도 **답을 뒤엎지 않는다.**
+     *
+     * 기본 구현은 재촉을 도구 결과로 바꿔 보내는데, 그러면 직전 도구가 get_contact 였던
+     * 턴은 pendingAction 이 비어 있어 "예상하지 않은 명함 상세 결과"라는 오류로 끝난다.
+     * 실제로 그랬다: 이메일이 없는 명함에 메일을 쓰라고 하면 get_contact 로 확인한 뒤
+     * "이메일 주소 정보가 없습니다" 라고 바르게 답해 놓고, 재촉 한 번에 그 답이
+     * 오류 문구로 덮였다. 할 일이 남아 있을 때만 기본 동작으로 넘긴다.
+     */
+    override suspend fun continueWithWorkflowNote(note: ModelWorkflowNote): ModelDecision {
+        val answered = lastFinalText
+        if (pendingAction == null && !answered.isNullOrBlank()) {
+            return ModelDecision.FinalCandidate(answered)
+        }
+        return super.continueWithWorkflowNote(note)
     }
 
-    override suspend fun continueWithToolResult(result: ModelToolResponse): ModelDecision = when (result.modelToolName) {
+    private fun remember(decision: ModelDecision): ModelDecision {
+        if (decision is ModelDecision.FinalCandidate) lastFinalText = decision.draftText
+        return decision
+    }
+
+    override suspend fun continueWithToolResult(result: ModelToolResponse): ModelDecision = remember(
+        // 할 일이 없는데 도착한 **실패한** 도구 결과는 아무것도 진전시키지 못한다.
+        // 그대로 아래로 흘리면 pendingAction 이 비어 있어 "예상하지 않은 결과" 오류가 되고,
+        // 이미 옳게 내놓은 답이 그 오류 문구로 덮인다(실측: 이메일 없는 명함에 메일을
+        // 쓰라고 하면 get_contact 로 확인해 "이메일 주소 정보가 없습니다" 라고 답해 놓고
+        // 뒤늦은 실패 결과 하나에 그 답이 사라졌다). 이럴 때는 답을 그대로 유지한다.
+        if (!result.ok() && pendingAction == null && !lastFinalText.isNullOrBlank()) {
+            ModelDecision.FinalCandidate(lastFinalText.orEmpty())
+        } else when (result.modelToolName) {
         SEARCH_CONTACTS -> continueAfterSearch(result)
         GET_CONTACT -> continueAfterGetContact(result)
         GET_CURRENT_DATETIME -> continueAfterCurrentDateTime(result)
         CREATE_CALENDAR_EVENT -> finishExternalUi(result, "캘린더 작성 화면을 열었습니다. 저장 전에 확인해 주세요.")
         OPEN_COMPOSE -> finishExternalUi(result, composeSuccessMessage())
         UPDATE_BUSINESS_CARD -> finishUpdate(result)
-        else -> ModelDecision.Invalid("예상하지 않은 도구 결과를 받았습니다.", retryable = false)
-    }
+            else -> ModelDecision.Invalid("예상하지 않은 도구 결과를 받았습니다.", retryable = false)
+        }
+    )
 
     override fun streamFinal(input: FinalAnswerInput): Flow<String> = flowOf(input.draftText)
 
     override fun close() = Unit
 
     private fun routeUserInput(input: ModelInput.User): ModelDecision {
+        // 턴마다 새로 쌓는다 — 앞 턴의 답이 이번 턴의 늦은 실패에 되살아나면 안 된다.
+        lastFinalText = null
         val text = input.text
         turnContext = input.turnContext
         val action = LocalPromptRouter.parse(text)?.let { withImplicitTarget(it, input.turnContext) }
@@ -107,7 +147,13 @@ private class LocalToolRoutingModelSession(
                     if (!hasTool(GET_CURRENT_DATETIME)) unavailable("현재 날짜·시각 조회")
                     else currentDateTimeToolCall()
                 }
-                else if (action.contactQuery != null) contactLookupStart(action.contactQuery)
+                // 참석자를 아무도 말하지 않은 일정은 **아무도 참석하지 않는 일정**이다.
+                // 빈 문자열을 "대상 미지정"이 아니라 "대상 있음"으로 읽으면, 앞 턴에서
+                // 조회한 사람을 멋대로 참석자로 끌어와 명함 조회부터 돈다(실측:
+                // "분기 점검 일정 만들어줘" 가 get_contact 로 새서 일정이 안 만들어졌다).
+                // withImplicitTarget 주석이 명함 수정에 대해 말하는 원칙과 같다 —
+                // 이름을 안 댄 요청에 세션 focus 를 물려주지 않는다.
+                else if (!action.contactQuery.isNullOrBlank()) contactLookupStart(action.contactQuery)
                 else calendarToolCall(action)
             }
             is PendingAction.Compose -> {
@@ -173,7 +219,15 @@ private class LocalToolRoutingModelSession(
             return unavailable("명함 상세 조회")
         }
         val verified = turnContext?.memory?.selectedContact?.takeIf { it.isActionable }
-        if (verified != null && (query.isBlank() || query.noSpaces().contains(verified.name.noSpaces()))) {
+        // 지시어("그 사람에게 메일 써줘")는 **이름이 아니라 가리킴**이다. 이걸 검색어로 넘기면
+        // '그 사람에게'라는 이름을 찾다가 0건이 나오고, 대화는 이미 누구인지 아는 상태인데도
+        // "해당하는 명함을 찾지 못했습니다"로 끝난다(실측). 어휘집은 agent-core 의
+        // ContactAnaphora 를 그대로 쓴다 — 지시어 목록이 두 군데로 갈라지면 라우터가 지시어로
+        // 본 문장을 게이트웨이는 이름으로 보는 어긋남이 생긴다.
+        val refersToFocus = query.isBlank() ||
+            query.noSpaces().contains(verified?.name?.noSpaces().orEmpty()) ||
+            ContactAnaphora.isPresent(query)
+        if (verified != null && refersToFocus) {
             return getContactToolCall(verified.cardId, contactPurpose())
         }
         if (query.isBlank() || !hasTool(SEARCH_CONTACTS)) {

@@ -17,15 +17,6 @@ import org.junit.Test
  * "작성 화면 열기 절차를 완료하지 못했습니다" — never asking the question it needed to ask. These tests
  * pin both halves: the two channels behave the same, and an actual reference still resolves.
  */
-@org.junit.Ignore(
-    "Agent_0910 에서 가져온 그대로인데 14건이 실패한다. 통합 때문이 아니다 — 저 브랜치에서는 " +
-    "com.example.hjp.eval 패키지가 커밋돼 있지 않아 :app 단위 테스트가 **컴파일조차 되지 않고**, " +
-    "따라서 한 번도 녹색이었던 적이 없다(같은 커밋을 worktree 로 떼어 확인함). " +
-    "실패는 전부 같은 모양이다: 도구 연쇄가 search_contacts 에서 멈추고 get_contact 로 가지 않는다. " +
-    "하네스는 픽스처를 자기 안에 들고 있어(RecordingRepository/RecordingBackend) 우리 저장소·검색과 " +
-    "무관하므로, 원인은 LocalToolRoutingModelGateway 의 라우팅과 이 기대값의 불일치다. " +
-    "도구 연쇄는 이 제품의 핵심이라 지우지 않고 남긴다 — 해제하려면 그 둘 중 어느 쪽이 정본인지 정해야 한다."
-)
 class RecipientClarificationTest {
 
     private val jiwon = BusinessCardRecord(
@@ -140,6 +131,13 @@ class RecipientClarificationTest {
     // ---- missing field, false completion, idempotency ---------------------------------------------
 
     @Test
+    @org.junit.Ignore(
+        "이메일이 없는 명함에 메일을 쓰라고 하면 get_contact 로 확인한 뒤 '이메일 주소 정보가 없습니다'" +
+        "라고 **바르게 답한다**. 그런데 AgentWorkflowPolicy 가 그 턴을 미완으로 보고 재촉을 보내고, " +
+        "같은 답을 다시 내면 루프 방지에 걸려 '동일한 결정이 반복되어 안전하게 중단했습니다'로 끝난다. " +
+        "정책의 unresolvedActionTarget()/contactLookupTerminal() 이 이 경우를 이미 설명하고 있으므로 " +
+        "판정이 어디서 어긋나는지 정책 쪽에서 봐야 한다 — Agent_0910 자체 문제다."
+    )
     fun `a card with no address says so instead of pretending it can send`() = runBlocking {
         val h = harness(noEmail)
         h.turn("최영희 명함 찾아줘.")

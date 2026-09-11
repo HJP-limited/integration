@@ -21,15 +21,6 @@ import org.junit.Test
  * The fix had to keep the focus, because anaphora depends on it. So each test below is a pair: the
  * turn that must *not* inherit the remembered person, and the turn that must still reach them.
  */
-@org.junit.Ignore(
-    "Agent_0910 에서 가져온 그대로인데 14건이 실패한다. 통합 때문이 아니다 — 저 브랜치에서는 " +
-    "com.example.hjp.eval 패키지가 커밋돼 있지 않아 :app 단위 테스트가 **컴파일조차 되지 않고**, " +
-    "따라서 한 번도 녹색이었던 적이 없다(같은 커밋을 worktree 로 떼어 확인함). " +
-    "실패는 전부 같은 모양이다: 도구 연쇄가 search_contacts 에서 멈추고 get_contact 로 가지 않는다. " +
-    "하네스는 픽스처를 자기 안에 들고 있어(RecordingRepository/RecordingBackend) 우리 저장소·검색과 " +
-    "무관하므로, 원인은 LocalToolRoutingModelGateway 의 라우팅과 이 기대값의 불일치다. " +
-    "도구 연쇄는 이 제품의 핵심이라 지우지 않고 남긴다 — 해제하려면 그 둘 중 어느 쪽이 정본인지 정해야 한다."
-)
 class SessionFocusVsTurnTargetTest {
 
     private val jiwon = BusinessCardRecord(

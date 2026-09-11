@@ -23,6 +23,9 @@ import com.hjp.tool.android.MessageComposerBackend
 import com.hjp.tool.android.MessageDraft
 import com.hjp.tool.android.OpenComposePlugin
 import com.hjp.tool.contact.BusinessCardRecord
+import com.hjp.searchlookup.QueryAnalyzer
+import com.hjp.tool.contact.KeywordSearchCandidate
+import com.hjp.tool.contact.BusinessCardKeywordIndex
 import com.hjp.tool.contact.BusinessCardUpdateResult
 import com.hjp.tool.contact.ContactSearchBackend
 import com.hjp.tool.contact.ContactSearchHit
@@ -332,7 +335,19 @@ class MultiturnScenarioHarness(
         }
     }
 
-    class RecordingRepository(initial: List<BusinessCardRecord>) : MutableBusinessCardRepository {
+    /**
+     * 시험용 저장소. **생산 키워드 인덱스([BusinessCardKeywordIndex])도 함께 구현한다.**
+     *
+     * 원래는 이걸 구현하지 않아서 RyeongContactSearchBackend 가 search-core 의 LIKE 폴백으로
+     * 내려갔다. 그러면 조사가 붙은 이름("고운말씨")이 LIKE '%고운말씨%' 로 나가 한 건도 못 찾는데,
+     * 실기기에서는 Room FTS4 티어가 토큰을 쪼개서 찾아낸다. 즉 시험이 앱보다 약한 검색을 쓰고
+     * 있었고, 그 차이가 라우팅 실패로 보였다. 이 프로젝트의 제약은 **시험이 폰을 대변해야
+     * 한다**는 것이라, 앱의 티어 구성(정확 구문 -> 전체 단어 -> 접두어 -> 동의어 LIKE)을
+     * 같은 순서로 인메모리에서 흉내 낸다. 토크나이저는 앱과 같은 search-core 의 QueryAnalyzer 다.
+     */
+    class RecordingRepository(initial: List<BusinessCardRecord>) :
+        MutableBusinessCardRepository, BusinessCardKeywordIndex {
+        private val analyzer = QueryAnalyzer()
         var cards: List<BusinessCardRecord> = initial
             private set
 
@@ -340,6 +355,41 @@ class MultiturnScenarioHarness(
 
         override suspend fun getById(cardId: String): BusinessCardRecord? =
             cards.firstOrNull { it.id == cardId }
+
+        override suspend fun searchKeywordCandidates(
+            query: String,
+            limit: Int,
+        ): List<KeywordSearchCandidate> {
+            val terms = analyzer.analyze(query).tokens
+                .map { it.replace(Regex("[^\\p{L}\\p{N}]+"), "") }
+                .filter { it.length >= 2 }
+                .distinct()
+            if (terms.isEmpty()) return emptyList()
+            val ranked = linkedMapOf<String, String>()
+            fun collect(tier: String, matches: (String) -> Boolean) {
+                if (ranked.size >= limit) return
+                cards.forEach { card ->
+                    if (ranked.size >= limit) return
+                    if (matches(searchableText(card))) ranked.putIfAbsent(card.id, tier)
+                }
+            }
+            val phrase = terms.joinToString(" ")
+            collect("keyword-fts-phrase") { it.contains(phrase) }
+            collect("keyword-fts-all") { text -> terms.all { text.contains(it) } }
+            collect("keyword-fts-prefix") { text ->
+                terms.all { term -> text.split(Regex("\\s+")).any { it.startsWith(term) } }
+            }
+            collect("keyword-like-synonym") { text -> terms.any { text.contains(it) } }
+            return ranked.entries.take(limit).mapIndexed { index, entry ->
+                KeywordSearchCandidate(entry.key, index + 1, entry.value)
+            }
+        }
+
+        private fun searchableText(card: BusinessCardRecord): String = listOf(
+            card.name, card.nameEn, card.company, card.title, card.department,
+            card.industry, card.location, card.memo, card.tags.joinToString(" "),
+            card.phone, card.mobile,
+        ).joinToString(" ").lowercase()
 
         override suspend fun update(
             cardId: String,

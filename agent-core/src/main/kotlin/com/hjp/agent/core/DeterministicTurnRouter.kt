@@ -441,7 +441,20 @@ object DeterministicTurnRouter {
         val calendarContinuation = ActionVocabulary.CALENDAR.any(raw::contains) &&
             TemporalSlotIntent.hasDate(raw) && TemporalSlotIntent.hasTime(raw) &&
             context.memory.selectedContact?.takeIf { it.isActionable } != null &&
-            context.transcript.any { entry -> ActionVocabulary.CALENDAR.any(entry.text::contains) }
+            // **현재 발화는 자기 자신의 선례가 아니다.** 라우터는 한 턴에서 여러 번 불리는데,
+            // 그 사이에 이번 사용자 발화가 transcript 에 들어간다. 그걸 거르지 않으면
+            // "일정"이 든 문장은 언제나 "앞에 캘린더 턴이 있었다"가 되어, 처음 잡는 일정도
+            // 연속으로 읽힌다. 그러면 앞 턴에서 조회한 사람이 참석자로 끌려 들어가
+            // 일정 대신 명함 조회가 돈다(실측: "분기 점검 일정 만들어줘" -> get_contact).
+            // **사용자가 한 말만 선례로 센다.** 도움말 답변("명함 검색, 캘린더 일정 작성 …")에
+            // 캘린더 낱말이 들어 있어서, 어시스턴트 발화까지 세면 잡담 한 번에 캘린더
+            // 연속이 성립해 버린다(실측: 검색->수정->"네 알겠습니다" 뒤의 첫 일정이
+            // get_contact 로 샜다).
+            context.transcript.any { entry ->
+                entry.role == ModelConversationRole.USER &&
+                    entry.text != raw &&
+                    ActionVocabulary.CALENDAR.any(entry.text::contains)
+            }
         if (calendarContinuation) {
             val focus = requireNotNull(context.memory.selectedContact)
             return targetedPlan(raw, focus.cardId, focus.name, DialogueAct.ACTION_CALENDAR)
