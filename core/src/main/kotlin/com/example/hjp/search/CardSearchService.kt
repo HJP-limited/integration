@@ -78,6 +78,13 @@ data class CardSearchResponse(
     val identifierRouted: Boolean = false,
     /** 적용된 필드 하드 필터. */
     val fieldFilters: FieldFilters = FieldFilters(),
+    /**
+     * 잘라내기 전 후보 수. **'조건에 맞는 사람 수'가 아니다** — 직함이 유일한 조건이면
+     * applyFieldFilters 가 삭제 대신 정렬만 하므로 융합 후보 풀이 그대로 남는다.
+     *
+     * 쓰임은 "보여준 것이 전부인가"를 아는 것까지다. 개수로 답하면 안 된다.
+     */
+    val totalMatched: Int = results.size,
 ) {
     /**
      * LLM 에 넣을 컨텍스트. 각 명함에 번호를 붙인다.
@@ -96,12 +103,25 @@ data class CardSearchResponse(
         // 개수는 **모델이 볼 수 없는 정보일 때만** 넣는다(총계 > 보여준 수).
         // total == shown 이면 모델이 카드를 다 보고 있어서 개수를 알려줄 이유가 없는데,
         // 넣으면 그 숫자를 답으로 옮겨 적는다(실측: "그 사람 부서는?" -> "총 1명").
-        val header =
-            if (totalMatches != null && totalMatches > taken.size) {
+        //
+        // [totalMatches] 는 셀 수 있는 조건일 때의 **진짜 전체 수**다. 그게 없어도 검색이
+        // 걸러낸 후보 수([totalMatched])는 항상 안다 — 그것만이라도 알려줘야 모델이
+        // "보이는 5장이 전부"라고 단정하지 않는다. 개수를 물었는데 셀 수 없는 질의에서
+        // 모델이 top-5 를 세어 "총 5명"이라 답하던 게 이 정보가 없어서였다(실기기 실측).
+        val header = when {
+            // 셀 수 있는 조건이면 진짜 전체 수를 준다. 이때만 숫자가 답이 될 수 있다.
+            totalMatches != null && totalMatches > taken.size ->
                 "조건에 맞는 사람: 총 ${totalMatches}명 (아래는 그중 ${taken.size}명)"
-            } else {
-                "검색 후보"
-            }
+            // 잘린 목록이면 **숫자 없이** 잘렸다는 사실만 알린다.
+            //
+            // totalMatched 를 숫자로 넣지 않는 이유: 그건 '조건에 맞는 수'가 아니라 융합
+            // 후보 풀 크기다. 직함이 유일한 조건이면 applyFieldFilters 가 삭제 대신
+            // 정렬만 하므로(의도된 설계) 풀이 그대로 남아 "변호사 150장" 같은 거짓이 된다.
+            // 모델에게 필요한 정보는 개수가 아니라 "이게 전부가 아니다"이다.
+            totalMatched > taken.size ->
+                "검색 후보 (상위 ${taken.size}장만 보여준 것이며, 전체 개수가 아니다)"
+            else -> "검색 후보"
+        }
         return "$header\n\n" + blocks.joinToString("\n\n")
     }
 
@@ -459,7 +479,11 @@ class CardSearchService(
             addAll(keywordRank.keys)
             addAll(vectorScores.map { it.first })
         }
-        if (candidateIds.isEmpty()) candidateIds.addAll(store.allCards().map { it.id })
+        // 후보가 하나도 없으면 **없는 채로 둔다.** 예전에는 여기서 전체 카드를 밀어 넣었는데,
+        // 그러면 키워드에도 벡터에도 안 걸린 카드들이 rrf(null)+rrf(null)=0.0 점으로 들어와
+        // 가나다순 앞 5명이 결과로 나갔다. 질의와 무관한 사람들이고, LLM 에도 그게 근거로
+        // 넘어간다. 빈 결과는 runChat 이 이미 "조건에 해당하는 명함을 찾지 못했습니다" 로
+        // 처리하므로, 폴백이 오히려 멀쩡한 경로를 가로채고 있었다.
 
         var hits = candidateIds.mapNotNull { id ->
             val card = store.findCard(id) ?: return@mapNotNull null
@@ -498,6 +522,8 @@ class CardSearchService(
             abstained = abstained,
             identifierRouted = identifierRouted,
             fieldFilters = filters,
+            // 잘라내기 **전** 개수. 이게 실제 후보 규모다.
+            totalMatched = hits.size,
         )
     }
 

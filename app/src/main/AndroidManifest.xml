@@ -28,10 +28,15 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.HJP">
+        <!-- singleTop: 이미 떠 있으면 새로 만들지 않고 onNewIntent 로 받는다.
+             이게 없으면 인텐트가 올 때마다 액티비티가 쌓이면서 Compose 상태가 새로 잡혀
+             멀티턴 세션(AgentSession)과 대화 내역이 통째로 초기화된다. MainActivity 의
+             onNewIntent 주석은 이 설정을 전제로 쓰여 있었는데 선언이 빠져 있었다. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.HJP"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

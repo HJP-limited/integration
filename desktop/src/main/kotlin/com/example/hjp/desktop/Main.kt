@@ -189,6 +189,7 @@ private fun runSearch(args: List<String>) {
         println("임베더: ${search.diagnostics().optString("active_embedding_status")}")
         println("경로: ${response.retrieval}${if (response.abstained) " · 기권" else ""}")
         println("필터: ${response.fieldFilters}")
+        println("후보 풀: ${response.totalMatched}장 → 표시 ${response.results.size}장 (풀 크기는 조건 일치 수가 아니다)")
         println("-".repeat(60))
         if (response.results.isEmpty()) {
             println("  (결과 없음)")
