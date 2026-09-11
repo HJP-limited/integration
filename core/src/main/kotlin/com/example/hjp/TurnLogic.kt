@@ -108,6 +108,7 @@ internal fun buildCapabilityAnswer(toolLabels: List<String>): String {
 private val GENERIC_LIST_STRIP_WORDS = listOf(
     // 긴 것부터 — "내가 가진"이 "내"보다 먼저 걷혀야 한다.
     "가지고 있어", "가지고 있는", "가지고있는", "내가 가진", "가진", "가지고",
+    "지금", "현재",
     "저장된", "등록된", "있는", "있어", "있나", "있지",
     "보여줘", "알려줘", "찾아줘", "리스트", "목록", "전체", "명함", "이름",
     "카드", "사람", "모두", "전부", "얼마나", "몇", "장수", "개수", "장", "명", "총", "개",
@@ -217,6 +218,7 @@ fun runChat(
     }
 
     val focusPerson = session.toolContextValue(AgentSession.KEY_FOCUS_PERSON)
+    val focusCompany = session.toolContextValue(AgentSession.KEY_FOCUS_COMPANY)
     val prevCardIds = session.toolContextValue(AgentSession.KEY_LAST_CARD_IDS)
         ?.split(",")?.filter { it.isNotBlank() }.orEmpty()
 
@@ -335,7 +337,7 @@ fun runChat(
         )
     }
 
-    val searchQuery = resolveSearchQuery(question, focusPerson)
+    val searchQuery = resolveSearchQuery(question, focusPerson, focusCompany)
 
     val search = try {
         pinAmbiguousTwin(
@@ -537,6 +539,10 @@ private val FOLLOWUP_PRONOUNS = listOf(
     "그 사람", "그사람", "그 분", "그분", "이 사람", "이사람", "저 사람", "저사람",
     "그 사람의", "걔", "그 회사", "그회사", "방금 그", "그 명함", "이 분", "이분",
 )
+
+/** 회사 자체가 다음 검색의 대상인 표현. "그 회사 주소" 같은 속성 질문은 제외한다. */
+private val COMPANY_REFERENCE = Regex("그\\s*회사")
+private val COMPANY_ENTITY_WORDS = listOf("다니", "근무", "재직", "일하", "사람", "직원", "동료")
 
 // 속성 명사로 시작하는 생략형 후속("메일은?", "직급은?")도 직전 인물에 대한 질문으로 본다.
 // 반대로 새 이름으로 시작하면("옹현은…", "홍길동은…") 새 인물로 보고 focus를 붙이지 않는다.
@@ -888,7 +894,11 @@ internal fun applyNarrowing(question: String, previousTerms: String?): String {
 private val ELLIPSIS_LEAD_FILLERS =
     listOf("어느", "어떤", "그럼", "그러면", "근데", "그리고", "혹시", "이제", "또")
 
-internal fun resolveSearchQuery(question: String, focusPerson: String?): String {
+internal fun resolveSearchQuery(
+    question: String,
+    focusPerson: String?,
+    focusCompany: String? = null,
+): String {
     if (focusPerson == null) return question
     val hasPronoun = FOLLOWUP_PRONOUNS.any { question.contains(it) }
     // 질문에 '새 검색값'(전화번호 뒷자리 등)이 있으면 생략형 후속으로 보지 않는다 —
@@ -913,7 +923,16 @@ internal fun resolveSearchQuery(question: String, focusPerson: String?): String 
     // 대명사도 없고 속성 명사로 시작하지도 않으면 새 인물/독립 질문 — 그대로 둔다.
     if (!hasPronoun && !isElliptical) return question
     var q = question
-    for (p in FOLLOWUP_PRONOUNS) q = q.replace(p, focusPerson)
+    // "그 회사 다니는 사람" — 회사 자체가 다음 검색의 대상일 때만 회사명으로 바꾼다.
+    // 사람 대명사 치환보다 **먼저** 해야 한다: FOLLOWUP_PRONOUNS 에 "그 회사"가 들어
+    // 있어서, 뒤로 밀면 회사 표현이 인물 이름으로 바뀌어 버린다.
+    if (focusCompany != null && COMPANY_REFERENCE.containsMatchIn(question) &&
+        COMPANY_ENTITY_WORDS.any { it in question }
+    ) {
+        q = q.replace(COMPANY_REFERENCE, focusCompany)
+    }
+    // 긴 표현부터 치환한다 — "그 사람"이 "그"보다 먼저 걸려야 한다.
+    for (p in FOLLOWUP_PRONOUNS.sortedByDescending { it.length }) q = q.replace(p, focusPerson)
     // 대명사 치환이 없었으면(생략형 후속) 이름을 앞에 붙여 focus 인물로 검색되게 한다.
     return if (q != question) q else "$focusPerson $question"
 }

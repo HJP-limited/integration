@@ -212,12 +212,14 @@ class AgentSessionTest {
         session.beginTurn("t1", "질문")
         session.recordTurn("t1", "질문", "답변")
         session.putToolContext(AgentSession.KEY_FOCUS_PERSON, "오동주")
+        session.putToolContext(AgentSession.KEY_FOCUS_COMPANY, "테스트회사")
 
         session.reset()
 
         assertEquals(ConversationMemory(), session.conversationMemory)
         assertTrue(session.recentMessages.isEmpty())
         assertNull(session.toolContextValue(AgentSession.KEY_FOCUS_PERSON))
+        assertNull(session.toolContextValue(AgentSession.KEY_FOCUS_COMPANY))
     }
 
     @Test

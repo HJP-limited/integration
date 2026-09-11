@@ -209,6 +209,9 @@ class AgentSession {
 
         /** tool_session_context 키 — 검색 tool 이 저장하는 값. */
         const val KEY_FOCUS_PERSON = "focus_person"
+
+        /** 현재 인물이 소속된 회사 — 회사 엔티티를 가리키는 후속 질의에 쓴다. */
+        const val KEY_FOCUS_COMPANY = "focus_company"
         const val KEY_LAST_CARD_IDS = "last_card_ids"
         const val KEY_LAST_QUERY = "last_query"
 

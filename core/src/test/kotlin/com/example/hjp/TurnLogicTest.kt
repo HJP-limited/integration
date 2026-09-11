@@ -58,7 +58,10 @@ class TurnLogicTest {
     fun `전체 모두 없이도 총과 몇이 같이 있으면 전체질문으로 본다`() {
         // "전체 명함이 몇 장이야?" 류 우회가 이 문구는 못 타서 "총 5명"으로 잘못 답했었다
         // (top-5를 전체로 착각). "총"+"몇" 신호를 추가해서 잡는다(회귀 재발 방지).
-        listOf("등록된 사람 총 몇 명이야?", "총 몇 명이야?", "등록된 명함 총 몇 개야?")
+        listOf(
+            "등록된 사람 총 몇 명이야?", "총 몇 명이야?", "등록된 명함 총 몇 개야?",
+            "지금 내가 가진 명함 몇개야?", "현재 명함은 몇 장이야?",
+        )
             .forEach { assertTrue("'$it' 가 전체질문으로 안 잡힘", isUnfilteredListAllQuestion(it)) }
     }
 
@@ -667,6 +670,27 @@ class TurnLogicTest {
         listOf("판교에 있는 개발자 찾아줘", "오늘 날씨 어때?", "전체 몇 장이야?").forEach {
             assertEquals(it, resolveSearchQuery(it, "김서영"))
         }
+    }
+
+    @Test
+    fun `그 회사의 다른 사람은 회사 엔티티로 푼다`() {
+        assertEquals(
+            "유한회사 앰버 다니는 다른 사람은?",
+            resolveSearchQuery("그 회사 다니는 다른 사람은?", "백다인", "유한회사 앰버"),
+        )
+        assertEquals(
+            "유한회사 앰버 직원 연락처 알려줘",
+            resolveSearchQuery("그 회사 직원 연락처 알려줘", "백다인", "유한회사 앰버"),
+        )
+    }
+
+    @Test
+    fun `그 회사의 속성 질문은 직전 인물 카드에 머문다`() {
+        // "그 회사 주소"는 회사를 새로 찾으라는 게 아니라 그 사람 카드의 주소를 묻는 말이다.
+        assertEquals(
+            "백다인 주소는?",
+            resolveSearchQuery("그 회사 주소는?", "백다인", "유한회사 앰버"),
+        )
     }
 
     @Test

@@ -436,14 +436,19 @@ internal fun ChatScreen(
                 // focus가 엉뚱한 사람으로 튀는 문제가 있었다(실기기에서 발견).
                 val resultNames = result.search?.results?.map { it.card.name }?.distinct().orEmpty()
                 val namedInQuestion = resultNames.firstOrNull { name -> question.contains(name) }
-                (namedInQuestion ?: resultNames.firstOrNull())?.let {
-                    session.putToolContext(AgentSession.KEY_FOCUS_PERSON, it)
+                (namedInQuestion ?: resultNames.firstOrNull())?.let { focusName ->
+                    session.putToolContext(AgentSession.KEY_FOCUS_PERSON, focusName)
+                    // 그 인물의 회사도 같이 기억한다 — "그 회사 다니는 사람 또 있어?" 처럼
+                    // 회사 자체를 가리키는 후속 질의를 풀려면 이름만으로는 안 된다.
+                    result.search?.results?.firstOrNull { it.card.name == focusName }?.card?.company
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { session.putToolContext(AgentSession.KEY_FOCUS_COMPANY, it) }
                     // 담화 순서 지시("처음에 물어본 사람")를 풀려면 최근 창 밖의 인물도
                     // 알아야 한다. focus 는 매 턴 그 턴의 주인공이므로 그대로 쌓으면
                     // '대화에 등장한 순서'가 된다.
                     session.putToolContext(
                         AgentSession.KEY_SUBJECT_HISTORY,
-                        appendSubject(session.toolContextValue(AgentSession.KEY_SUBJECT_HISTORY), it),
+                        appendSubject(session.toolContextValue(AgentSession.KEY_SUBJECT_HISTORY), focusName),
                     )
                 }
                 // 정정/확인 발화가 아니었을 때만 근거 카드를 갱신한다
