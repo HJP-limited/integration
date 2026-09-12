@@ -71,9 +71,14 @@ if ($LASTEXITCODE -ne 0) { throw "설치 실패" }
 # 네 파일 전부 우리가 민다. embeddinggemma 는 AI Edge RAG SDK 가 쓰는데 토크나이저
 # (sentencepiece.model)와 **한 세트**라 둘 중 하나만 있으면 임베더가 안 뜬다.
 # 새 폰에는 아무것도 없으므로 "폰에 있겠지" 를 전제하지 않는다.
+# FunctionGemma 는 빼 둔다. Agent_0910 은 대화/도구호출 모델을 나누지 않고 생성 모델
+# **하나**를 쓰므로, 289MB 를 밀어도 아무도 읽지 않는다(옛 스택의 저메모리 폴백 잔재).
+#
+# 생성 모델은 이름을 바꾸지 않고 그대로 민다. 앱이 모델 폴더의 .litertlm 중에서 골라
+# 쓰고(AppContainer.resolveGenerativeArtifact), 고른 파일이 진짜인지는 바이트 크기와
+# SHA-256 으로 확인한다.
 $models = @(
     "gemma-4-E2B-it.litertlm",
-    "functiongemma_270m.litertlm",
     "embeddinggemma-300m.tflite",
     "sentencepiece.model"
 )
@@ -102,7 +107,6 @@ foreach ($name in $models) {
 foreach ($name in $missing) {
     switch ($name) {
         "gemma-4-E2B-it.litertlm"     { Write-Warning "$name 없음 -> 대화 답변이 안 됩니다(검색 결과만 뜸)." }
-        "functiongemma_270m.litertlm" { Write-Warning "$name 없음 -> 저메모리 폴백 경로가 없습니다." }
         "embeddinggemma-300m.tflite"  { Write-Warning "$name 없음 -> 벡터 검색이 빠지고 키워드 전용이 됩니다." }
         "sentencepiece.model"         { Write-Warning "$name 없음 -> embeddinggemma 토크나이저가 없어 임베더가 안 뜹니다." }
     }

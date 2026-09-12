@@ -630,7 +630,7 @@ internal fun ModelsScreen(
 
         ModelCard(
             title = "대화·도구 호출 모델",
-            subtitle = "Gemma 4 E2B (LiteRT-LM) · " + GENERATIVE_MODEL_FILE,
+            subtitle = "Gemma 4 E2B (LiteRT-LM) · 파일 이름은 무엇이든 됩니다",
             role = "질문을 읽고 어떤 도구를 쓸지 고른 뒤 답변을 씁니다. " +
                 "명함 검색·상세 조회·일정·메일이 모두 이 모델의 판단을 거칩니다.",
             state = if (generativeReady) ModelState.Ready else ModelState.Missing,

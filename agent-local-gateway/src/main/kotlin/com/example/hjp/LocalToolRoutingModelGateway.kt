@@ -900,7 +900,10 @@ private object UpdatePromptParser {
         // Once a reference has been resolved the sentence names the person, not the object:
         // "김지원 메모를 VIP로 수정해줘" is the same request as "김지원 명함 수정해줘". Requiring the
         // literal word 명함 made every resolved-reference edit unparseable.
-        if (!intent.containsMatchIn(forIntent) && field == null) return null
+        // 칸도 카드도 안 말한 수정("수정해줘")도 받는다. 예전에는 여기서 null 이라 기능
+        // 안내문으로 끝났는데, 사용자는 이미 "손재민씨 명함 좀 고쳐야 해" 로 대상을 말한
+        // 뒤였다. 대상은 withImplicitTarget 이 세션에서 채우고, 무엇을 고칠지는
+        // missingMessage 가 되묻는다 — 그게 이 상황에 맞는 답이다.
         val clear = clearWords.containsMatchIn(forIntent)
         val updates = linkedMapOf<String, String>()
         val clearFields = linkedSetOf<String>()

@@ -54,7 +54,22 @@ import kotlinx.coroutines.CompletableDeferred
 class AppContainer(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val modelRoot = appContext.getExternalFilesDir("models") ?: File(appContext.filesDir, "models")
-    val modelFile: File = File(modelRoot, "hjp-agent.litertlm")
+
+    /**
+     * 생성 모델 파일. **이름을 하나로 못 박지 않는다.**
+     *
+     * 예전에는 `hjp-agent.litertlm` 만 봤는데, 우리가 가진 파일은 `gemma-4-E2B-it.litertlm`
+     * 이다. 폰에 올바른 모델을 밀어 넣어도 앱은 다른 이름을 찾고 있었고, 아무 말 없이
+     * "모델 없음"이 됐다 — 폰 앞에서 한참 헤매게 되는 종류의 실패다.
+     *
+     * 그래서 규칙 이름을 **먼저** 보고, 없으면 모델 폴더의 `.litertlm` 중 가장 큰 것을 쓴다.
+     * 이름으로 고르는 게 위험하지 않은 이유는 뒤에 내용 검증이 있기 때문이다:
+     * [ModelDeploymentResolver] 가 바이트 크기와 SHA-256 으로 공식 아티팩트인지 확인하므로,
+     * 엉뚱한 파일을 집으면 여기서 통과하지 못하고 "모델 없음"으로 정확히 보고된다.
+     * 가장 큰 것을 고르는 것도 같은 이유로 안전하다 — 크기가 곧 자격이 아니라, 후보를
+     * 하나 정하는 방법일 뿐이다.
+     */
+    val modelFile: File = resolveGenerativeArtifact(modelRoot)
 
     /**
      * One counter set for the whole composition.
@@ -292,6 +307,24 @@ class AppContainer(context: Context) : AutoCloseable {
     internal companion object {
         /** 프롬프트는 [HjpSystemInstruction] 한 곳에만 둔다 — 노트북 러너도 같은 것을 쓴다. */
         const val SYSTEM_INSTRUCTION = HjpSystemInstruction.TEXT
+
+        /** 규칙 이름. 이게 있으면 그대로 쓴다. */
+        private const val PREFERRED_ARTIFACT = "hjp-agent.litertlm"
+
+        /**
+         * 모델 폴더에서 생성 모델로 쓸 파일을 고른다.
+         *
+         * 못 찾으면 규칙 이름을 그대로 돌려준다 — 그래야 화면과 로그가 "여기에 넣으세요"
+         * 라고 말할 경로를 갖는다.
+         */
+        fun resolveGenerativeArtifact(modelRoot: File): File {
+            val preferred = File(modelRoot, PREFERRED_ARTIFACT)
+            if (preferred.isFile) return preferred
+            val candidates = modelRoot.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".litertlm", ignoreCase = true) }
+                .orEmpty()
+            return candidates.maxByOrNull { it.length() } ?: preferred
+        }
 
         fun isAndroidEmulator(): Boolean =
             Build.HARDWARE.equals("ranchu", ignoreCase = true) ||

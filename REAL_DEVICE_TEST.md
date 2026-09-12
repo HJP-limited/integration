@@ -11,11 +11,17 @@ OCR·KIE 자산(141MB)은 **APK 안에** 들어간다. 따로 넣을 것이 없�
 
 ```text
 /sdcard/Android/data/com.example.hjp/files/models/
-  gemma-4-E2B-it.litertlm        2.6G  대화 답변
-  functiongemma_270m.litertlm    289M  저메모리 폴백
+  gemma-4-E2B-it.litertlm        2.6G  대화·도구 선택
   embeddinggemma-300m.tflite     179M  벡터 검색  ┐ 한 세트다.
   sentencepiece.model            4.7M  토크나이저 ┘ 둘 중 하나만 있으면 임베더가 안 뜬다
 ```
+
+생성 모델은 **이름이 무엇이든 된다.** 앱이 `hjp-agent.litertlm` 을 먼저 보고, 없으면 모델
+폴더의 `.litertlm` 중 가장 큰 것을 쓴다. 고른 파일이 진짜인지는 바이트 크기와 SHA-256 으로
+확인하므로, 엉뚱한 파일을 집으면 "모델 없음"으로 정확히 보고된다.
+
+FunctionGemma 는 더 이상 쓰지 않는다 — 대화/도구호출 모델을 나누던 옛 구조의 잔재이고,
+지금은 생성 모델 하나가 도구 선택까지 한다.
 
 앱은 내부 경로(`/data/data/com.example.hjp/files/models/`)도 같이 본다.
 
