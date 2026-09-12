@@ -100,6 +100,7 @@
 | 모델 | 크기 | 위치 | 저장소 포함 |
 |---|---|---|---|
 | PP-OCRv5 det / rec | 4.7M / 13M | `app/src/main/assets/ocr/` | O |
+| 글줄 방향 분류 `textline_ori.onnx` | 1.0M | 〃 | O |
 | KIE 토크나이저 · 라벨 | 4.9M / 208B | 〃 | O |
 | KIE 분류기 `kie_minilm_int8.onnx` | 113M | 〃 | **X** — `docs/OCR_ASSETS.md` 참조 |
 | Gemma 4 E2B (대화) | 2.4G | 기기 `files/models/` · 노트북은 `litert-lm import` | X |

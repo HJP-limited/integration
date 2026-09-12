@@ -45,10 +45,24 @@ class OcrPipeline(assets: OcrAssets) {
     private val rec: OrtSession
     private val charset: List<String>
 
+    /**
+     * 글줄 위아래를 바로잡는 단계. 모델이 없으면 null 이고 그대로 인식한다.
+     *
+     * 참조 구현의 [5] textline_orientation 에 해당한다 — 원근 보정 **뒤**, 인식 **앞**.
+     * 이 자리인 이유: 크롭이 이미 가로로 누운 뒤라야 분류기가 학습된 모양(160x80)과 맞고,
+     * 인식기에 넣기 전이라야 뒤집힘을 고칠 수 있다.
+     */
+    private val textLineOrientation: TextLineOrientation?
+
+    /** 진단용. 이 단계가 실제로 켜져 있는지 화면·로그가 물어볼 수 있어야 한다. */
+    val textLineOrientationEnabled: Boolean get() = textLineOrientation != null
+
     init {
         val opts = OrtSession.SessionOptions()
         det = env.createSession(assets.require("det.onnx"), opts)
         rec = env.createSession(assets.require("rec.onnx"), opts)
+        // 없으면 null 이고 그 단계만 빠진다 — 모델 파일이 배치되지 않아도 촬영은 돌아야 한다.
+        textLineOrientation = TextLineOrientation.createOrNull(env, assets)
         charset = buildList {
             add("<blank>")
             val dict = assets.text("korean_dict.txt")
@@ -163,6 +177,8 @@ class OcrPipeline(assets: OcrAssets) {
         val regions = ArrayList<Region>()
         for ((box, detScore) in results) {
             val crop = cropQuad(bgr, box) ?: continue
+            // 뒤집힌 글줄을 바로 세운다. 검출기는 사각형만 주고 위아래는 알려주지 않는다.
+            textLineOrientation?.upright(crop)
             val (text, recScore) = recognize(crop)
             crop.release()
             if (text.isEmpty()) continue

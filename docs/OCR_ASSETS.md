@@ -43,22 +43,38 @@ trim 본으로 바꾸면 분류기 113 → 36.6 MB, 토크나이저 4.9 → 0.9 
 없다고 기록돼 있다(`OCR/kie/README.md`). 그러려면 `trim_vocab.py --ascii-cap 15000` →
 `export_onnx_trim.py` 를 학습 데이터와 함께 돌려야 한다.
 
-## 방향 분류기 — 아직 없음
+## 방향 분류기
 
-원본 파이프라인에는 방향 분류기가 둘 있고, 우리 assets 에는 **둘 다 없다**:
+원본 파이프라인에는 방향 분류기가 둘 있다. 하나만 넣었다:
 
-| 모델 | 하는 일 | 원본에서 |
-|---|---|---|
-| `PP-LCNet_x0_25_textline_ori` | 글줄 하나가 0/180 중 어느 쪽인지 | 항상 켜짐 |
-| `PP-LCNet_x1_0_doc_ori` | 이미지 전체가 0/90/180/270 중 어느 쪽인지 | 사람이 체크박스로 켬 |
+| 모델 | 하는 일 | 여기 | 크기 |
+|---|---|---|---|
+| `PP-LCNet_x0_25_textline_ori` | 글줄 하나가 0/180 중 어느 쪽인지 | **넣음** (`textline_ori.onnx`) | 1.0 MB |
+| `PP-LCNet_x1_0_doc_ori` | 이미지 전체가 0/90/180/270 중 어느 쪽인지 | 안 넣음 | 6.5 MB |
 
-없어서 생기는 일은 하나다: **세로로 쓴 글줄이 뒤집혀 들어가도 바로잡을 수단이 없다.**
-그래서 `OcrPipeline.cropQuad` 가 세로 크롭을 어느 쪽으로 돌리는지가 그대로 결과가 된다 —
-원본과 같은 반시계 방향으로 맞춰 뒀다(원본은 뒤에 분류기가 있어서 방향 선택이 덜 중요했다).
+둘 다 **파인튜닝 없는 공개 사전학습 가중치**다(학습을 거친 것은 KIE 분류기뿐이다).
 
-촬영 사진이 통째로 누운 경우는 분류기가 아니라 EXIF 로 처리한다(`CaptureScreen.uprightByExif`).
-카메라가 방향을 태그로 남기므로 추측할 필요가 없고, 그게 더 정확하다. `doc_ori` 가 필요한
-경우는 EXIF 가 없는 이미지(스캔본·스크린샷)가 거꾸로일 때뿐이다.
+`doc_ori` 를 넣지 않은 이유: 사진이 통째로 누운 경우는 EXIF 로 처리한다
+(`CaptureScreen.uprightByExif`). 카메라가 방향을 태그로 정확히 남기므로 모델로 추측할 이유가
+없다. 원본 데모도 기본값이 꺼져 있고 — 평평한 명함에서 분류기가 잘못 회전시켜 한글을
+깨뜨린다고 주석에 적혀 있다 — 사람이 체크박스로만 켠다. EXIF 가 없는 이미지(스캔본·스크린샷)가
+거꾸로일 때만 쓸모가 있다.
 
-넣으려면 KIE 와 같은 절차를 밟는다: HuggingFace `PaddlePaddle/<모델명>` 에서 받아 ONNX 로
-변환하고 `app/src/main/assets/ocr/` 에 둔다. 두 모델 다 수 MB 수준이라 크기는 문제가 아니다.
+### textline_ori 재생성
+
+```
+pip install paddlepaddle==3.1.0 paddlex
+python -m paddlex --install paddle2onnx          # paddle2onnx 2.0.2rc3 을 짝 맞춰 깐다
+python -c "from huggingface_hub import snapshot_download; snapshot_download('PaddlePaddle/PP-LCNet_x0_25_textline_ori', local_dir='ori')"
+python -m paddlex --paddle2onnx --paddle_model_dir ori --onnx_model_dir out --opset_version 13
+cp out/inference.onnx app/src/main/assets/ocr/textline_ori.onnx
+```
+
+**버전 조합이 까다롭다.** paddle 3.3.1 은 paddle2onnx 2.x 의 네이티브 확장이 심볼을 못 찾아
+DLL 로드에 실패하고, paddle 3.0.0 은 paddle2onnx 가 요구하는 하한(3.0.0.dev20250426)보다
+낮다. paddle2onnx 1.3.1 은 로드는 되지만 Paddle 3.x 의 새 PIR 형식(`inference.json`)을 못
+읽는다. **3.1.0 + 2.0.2rc3** 이 맞는 짝이다.
+
+검증: 입력 `x` `[N,3,80,160]`, 출력 `[N,2]`, opset 13. 그래프에 softmax 가 들어 있어 두 값의
+합이 1 이다 — `TextLineOrientation` 이 차이가 아니라 확률로 판정하는 이유다.
+합성 한글 글줄로 확인한 분리도: 똑바로 0.88~1.00 / 뒤집힘 0.67~1.00.
