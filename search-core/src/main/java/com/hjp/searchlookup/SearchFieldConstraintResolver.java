@@ -83,6 +83,7 @@ final class SearchFieldConstraintResolver {
         boolean roleMarked = hasLocationRole(analysis.normalizedQuery);
         List<String> locations = new ArrayList<>();
         List<String> titles = new ArrayList<>();
+        List<String> departments = new ArrayList<>();
         boolean namedRealPerson = false;
         boolean namedAbsentPersonWithHonorific = false;
         boolean namedAbsentBareName = false;
@@ -93,6 +94,12 @@ final class SearchFieldConstraintResolver {
             // A word the cards use as a job is a job, even when it doubles as a district.
             if (vocabulary.titleTerms.contains(token)) {
                 addDistinct(titles, token);
+                continue;
+            }
+            // 부서는 직함 다음, 지명보다 먼저. 팀 이름이 지역 접미사로 끝나는 일이 있다
+            // (…지원구, …영업소). 조직 단위로 실재하는 말이면 그쪽이 먼저다.
+            if (vocabulary.departmentTerms.contains(token)) {
+                addDistinct(departments, token);
                 continue;
             }
             // Place before person. 군 is an honorific and also the suffix of 가평군·음성군·울주군,
@@ -135,10 +142,12 @@ final class SearchFieldConstraintResolver {
         // SearchLookupService, which is the first place that knows.
         boolean bareNameAbsent = namedAbsentBareName && !namedRealPerson && abstainReason.isEmpty();
 
-        if (locations.isEmpty() && titles.isEmpty() && abstainReason.isEmpty() && !bareNameAbsent) {
+        if (locations.isEmpty() && titles.isEmpty() && departments.isEmpty()
+                && abstainReason.isEmpty() && !bareNameAbsent) {
             return SearchFieldConstraintPlan.NONE;
         }
-        return SearchFieldConstraintPlan.of(locations, titles, known, abstainReason, bareNameAbsent);
+        return SearchFieldConstraintPlan.of(
+                locations, titles, departments, known, abstainReason, bareNameAbsent);
     }
 
     /** How confidently a token points at a person. */

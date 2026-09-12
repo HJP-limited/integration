@@ -15,6 +15,7 @@ import com.hjp.agent.core.ContactReadIntent
 import com.hjp.agent.core.CurrentDateTimeIntent
 import com.hjp.agent.core.PersonNameMask
 import com.hjp.agent.core.ContactAnaphora
+import com.hjp.agent.contract.ModelConversationRole
 import com.hjp.agent.core.TurnContactTargetResolver
 import java.time.DateTimeException
 import java.time.LocalDate
@@ -53,6 +54,16 @@ private class LocalToolRoutingModelSession(
     /** 마지막으로 사용자에게 내놓은 답. 워크플로 재촉이 들어왔을 때 되돌려 줄 값이다. */
     private var lastFinalText: String? = null
 
+    /**
+     * 이 게이트웨이가 **직접 요청한** 도구 호출들.
+     *
+     * 커널은 우리가 부르지 않은 도구도 실행한다 — 라우터가 사람을 확정해 두면 새로 읽어
+     * 오라고(requiresFreshRead) 시킨다. 그런 결과가 오면 이번 턴에 우리가 낸 답이라는 게
+     * 없으므로, 앞 턴 답을 되살리면 안 된다(실측: "첫 번째 사람 상세 보여줘" 가 앞 턴의
+     * 개수 답을 그대로 뱉었다).
+     */
+    private val issuedCallIds = LinkedHashSet<String>()
+
     override suspend fun decide(input: ModelInput): ModelDecision = remember(
         when (input) {
             is ModelInput.User -> routeUserInput(input)
@@ -82,12 +93,18 @@ private class LocalToolRoutingModelSession(
     }
 
     override suspend fun continueWithToolResult(result: ModelToolResponse): ModelDecision = remember(
-        // 할 일이 없는데 도착한 **실패한** 도구 결과는 아무것도 진전시키지 못한다.
-        // 그대로 아래로 흘리면 pendingAction 이 비어 있어 "예상하지 않은 결과" 오류가 되고,
-        // 이미 옳게 내놓은 답이 그 오류 문구로 덮인다(실측: 이메일 없는 명함에 메일을
-        // 쓰라고 하면 get_contact 로 확인해 "이메일 주소 정보가 없습니다" 라고 답해 놓고
-        // 뒤늦은 실패 결과 하나에 그 답이 사라졌다). 이럴 때는 답을 그대로 유지한다.
-        if (!result.ok() && pendingAction == null && !lastFinalText.isNullOrBlank()) {
+        // 할 일이 없는데 도착한 도구 결과는 아무것도 진전시키지 못한다. 그대로 아래로 흘리면
+        // pendingAction 이 비어 있어 "예상하지 않은 결과" 오류가 되고, 이미 옳게 내놓은 답이
+        // 그 오류 문구로 덮인다.
+        //
+        // 두 가지 모양으로 겪었다. (1) 이메일 없는 명함에 메일을 쓰라고 하면 get_contact 로
+        // 확인해 "이메일 주소 정보가 없습니다" 라고 답해 놓고, 뒤늦은 실패 결과에 그 답이
+        // 사라졌다. (2) "그 사람한테 메일 초안 열어줘" 처럼 본문이 없는 요청은 게이트웨이가
+        // "본문을 알려 주세요" 로 끝내는데, 라우터가 그 턴을 이미 사람에게 묶어 둬서 커널이
+        // get_contact 를 **성공적으로** 실행하고, 그 결과가 되물음을 덮었다.
+        //
+        // 성공이든 실패든 같다 — 이 턴은 이미 답을 냈다.
+        if (pendingAction == null && result.callId in issuedCallIds && !lastFinalText.isNullOrBlank()) {
             ModelDecision.FinalCandidate(lastFinalText.orEmpty())
         } else when (result.modelToolName) {
         SEARCH_CONTACTS -> continueAfterSearch(result)
@@ -108,6 +125,7 @@ private class LocalToolRoutingModelSession(
     private fun routeUserInput(input: ModelInput.User): ModelDecision {
         // 턴마다 새로 쌓는다 — 앞 턴의 답이 이번 턴의 늦은 실패에 되살아나면 안 된다.
         lastFinalText = null
+        issuedCallIds.clear()
         val text = input.text
         turnContext = input.turnContext
         val action = LocalPromptRouter.parse(text)?.let { withImplicitTarget(it, input.turnContext) }
@@ -129,6 +147,7 @@ private class LocalToolRoutingModelSession(
             return ModelDecision.FinalCandidate(missing, ClarifyReason.MISSING_REQUIRED_SLOT)
         }
         pendingAction = action
+        if (System.getenv("HJP_GW_DEBUG") != null) println("@@@route " + action)
         return when (action) {
             is PendingAction.ContactSearch -> {
                 // The pre-router already grounded this reference on a verified card, so re-reading
@@ -140,7 +159,7 @@ private class LocalToolRoutingModelSession(
             }
             is PendingAction.ContactCount -> {
                 if (!hasTool(COUNT_CONTACTS)) unavailable("명함 개수 세기")
-                else countToolCall(action.condition)
+                else countToolCall(action.condition.ifBlank { inheritedCountCondition(text) })
             }
             is PendingAction.CurrentDateTime -> {
                 if (!hasTool(GET_CURRENT_DATETIME)) unavailable("현재 날짜·시각 조회")
@@ -287,7 +306,11 @@ private class LocalToolRoutingModelSession(
 
     private fun continueAfterGetContact(result: ModelToolResponse): ModelDecision {
         val action = pendingAction
-        if (
+        if (System.getenv("HJP_GW_DEBUG") != null) println("@@@getc action=" + action + " ok=" + result.ok())
+        // action == null 은 오류가 아니다 — 커널이 라우터의 확정에 따라 스스로 읽어 온 경우이고,
+        // 아래 when 이 카드를 그대로 보여 준다. 다른 종류의 할 일이 걸려 있는데 명함 상세가
+        // 오는 것만 진짜 예상 밖이다.
+        if (action != null &&
             action !is PendingAction.Calendar && action !is PendingAction.Compose &&
             action !is PendingAction.ContactUpdate && action !is PendingAction.ContactSearch
         ) {
@@ -303,12 +326,13 @@ private class LocalToolRoutingModelSession(
         return when (action) {
             is PendingAction.ContactSearch -> {
                 pendingAction = null
-                val details = listOf("company", "title", "email", "mobile", "phone")
-                    .mapNotNull { field -> contact.string(field)?.takeIf(String::isNotBlank) }
-                ModelDecision.FinalCandidate(
-                    "${contact.string("name").orEmpty()} 명함입니다.\n- ${details.joinToString(" · ")}",
-                )
+                renderCard(contact)
             }
+            // 우리가 부르지 않은 조회. 라우터가 사람을 확정해 두면 커널이 새로 읽어 오라고
+            // 시키는데(requiresFreshRead), 그 결과가 여기로 온다. 할 일이 없다고 오류를 내면
+            // "첫 번째 사람 상세 보여줘" 가 "예상하지 않은 명함 상세 결과"로 끝난다(실측).
+            // 물어본 것이 그 사람의 카드이므로 그대로 보여 준다.
+            null -> renderCard(contact)
             is PendingAction.Calendar -> {
                 val email = contact.string("email")
                 calendarToolCall(
@@ -343,6 +367,31 @@ private class LocalToolRoutingModelSession(
     }
 
     /** 전체 개수는 조건을 **보내지 않는다.** 빈 문자열은 인자 검증에 걸린다. */
+    /**
+     * 조건을 말하지 않은 개수 질문이 무엇을 세야 하는지.
+     *
+     * "선행연구팀 사람 찾아줘" 다음의 "몇 명이야?" 는 **그 팀이** 몇 명이냐는 뜻이다.
+     * 전체를 세면 1000 이라 답하게 되는데, 물어본 것과 다른 답이면서 숫자라서 맞아 보인다
+     * (실측: 선행연구팀 12명인데 1000장이라고 답했다).
+     *
+     * 다만 명함·연락처·카드를 입에 올린 질문("명함 몇 장 있어")은 전체를 묻는 것이다. 그때는
+     * 물려받지 않는다.
+     *
+     * 앞 발화는 transcript 에서 가져온다. 라우터는 한 턴에서 여러 번 불리고 그 사이 이번
+     * 발화가 transcript 에 들어가므로, 지금 문장과 같은 것은 건너뛴다.
+     */
+    private fun inheritedCountCondition(current: String): String {
+        if (ContactReadIntent.CARD_OBJECTS.any(current::contains)) return ""
+        val previous = turnContext?.transcript.orEmpty()
+            .lastOrNull { entry ->
+                entry.role == ModelConversationRole.USER &&
+                    entry.text.trim() != current.trim() &&
+                    CountPromptParser.parse(entry.text) == null
+            }
+            ?: return ""
+        return previous.text
+    }
+
     private fun countToolCall(condition: String) = toolCall(COUNT_CONTACTS) {
         if (condition.isNotBlank()) put("query", condition)
     }
@@ -367,6 +416,14 @@ private class LocalToolRoutingModelSession(
         return ModelDecision.FinalCandidate(
             if (condition.isBlank()) "등록된 명함은 총 " + count + "장입니다."
             else "조건에 맞는 명함은 총 " + count + "장입니다.",
+        )
+    }
+
+    private fun renderCard(contact: JsonObject): ModelDecision {
+        val details = listOf("company", "title", "email", "mobile", "phone")
+            .mapNotNull { field -> contact.string(field)?.takeIf(String::isNotBlank) }
+        return ModelDecision.FinalCandidate(
+            (contact.string("name").orEmpty()) + " 명함입니다." + NEWLINE + "- " + details.joinToString(" · "),
         )
     }
 
@@ -479,12 +536,15 @@ private class LocalToolRoutingModelSession(
     private fun toolCall(
         modelToolName: String,
         arguments: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit,
-    ): ModelDecision.ToolCalls =
-        ModelDecision.ToolCalls(listOf(ModelToolCall(
-            callId = UUID.randomUUID().toString(),
+    ): ModelDecision.ToolCalls {
+        val callId = UUID.randomUUID().toString()
+        issuedCallIds += callId
+        return ModelDecision.ToolCalls(listOf(ModelToolCall(
+            callId = callId,
             modelToolName = modelToolName,
             arguments = buildJsonObject(arguments),
         )))
+    }
 
     private fun hasTool(modelToolName: String): Boolean =
         config.toolCatalog.contractsByModelName.containsKey(modelToolName)
@@ -1052,6 +1112,7 @@ private fun stripRecipientPrefix(value: String): String =
         .let(::cleanExtractedText)
 
 private const val SEARCH_CONTACTS = "search_contacts"
+private const val NEWLINE = "\n"
 private const val GET_CONTACT = "get_contact"
 private const val COUNT_CONTACTS = "count_contacts"
 private const val GET_CURRENT_DATETIME = "get_current_datetime"

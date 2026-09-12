@@ -45,6 +45,15 @@ final class SearchFieldVocabulary {
     /** Words that appear in {@link BusinessCard#title}, and nowhere else. */
     final Set<String> titleTerms;
 
+    /**
+     * Organisational units as the cards spell them — the whole name and its words.
+     *
+     * A department is an exact unit, unlike a job title: 선행연구팀 either is somebody's team or is
+     * not. Counting "선행연구팀 몇 명이야" without it answered 1000 — the whole address book — and a
+     * number is the one kind of wrong answer that looks right.
+     */
+    final Set<String> departmentTerms;
+
     /** Words this repository uses for people, employers, jobs and departments. */
     final Set<String> nonLocationTerms;
 
@@ -62,7 +71,8 @@ final class SearchFieldVocabulary {
 
     private SearchFieldVocabulary(Set<String> administrativeLocations, Set<String> locationTerms,
             Set<String> titleTerms, Set<String> nonLocationTerms, List<String> locationHaystacks,
-            Set<String> personNames, Set<String> surnames, Set<String> givenNames) {
+            Set<String> personNames, Set<String> surnames, Set<String> givenNames,
+            Set<String> departmentTerms) {
         this.administrativeLocations = Collections.unmodifiableSet(administrativeLocations);
         this.locationTerms = Collections.unmodifiableSet(locationTerms);
         this.titleTerms = Collections.unmodifiableSet(titleTerms);
@@ -71,6 +81,7 @@ final class SearchFieldVocabulary {
         this.personNames = Collections.unmodifiableSet(personNames);
         this.surnames = Collections.unmodifiableSet(surnames);
         this.givenNames = Collections.unmodifiableSet(givenNames);
+        this.departmentTerms = Collections.unmodifiableSet(departmentTerms);
     }
 
     /**
@@ -108,6 +119,7 @@ final class SearchFieldVocabulary {
         Set<String> nonLocations = new LinkedHashSet<>();
         List<String> haystacks = new ArrayList<>();
         Set<String> names = new LinkedHashSet<>();
+        Set<String> departments = new LinkedHashSet<>();
 
         for (BusinessCard card : cards) {
             if (card == null) continue;
@@ -144,7 +156,12 @@ final class SearchFieldVocabulary {
             for (String word : words(card.name)) nonLocations.add(word);
             for (String word : words(card.nameEn)) nonLocations.add(word);
             for (String word : words(card.company)) nonLocations.add(word);
-            for (String word : words(card.department)) nonLocations.add(word);
+            String department = normalize(card.department);
+            if (!department.isEmpty()) departments.add(department);
+            for (String word : words(card.department)) {
+                nonLocations.add(word);
+                departments.add(word);
+            }
             for (String word : words(card.industry)) nonLocations.add(word);
         }
         // A word the cards use as a place stays a place, even if some company name repeats it.
@@ -161,7 +178,7 @@ final class SearchFieldVocabulary {
             }
         }
         return new SearchFieldVocabulary(administrative, locations, titles, nonLocations, haystacks,
-                names, surnames, givenNames);
+                names, surnames, givenNames, departments);
     }
 
     /**

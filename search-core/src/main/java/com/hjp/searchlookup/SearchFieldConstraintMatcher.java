@@ -38,6 +38,11 @@ final class SearchFieldConstraintMatcher {
             String where = SearchFieldVocabulary.normalize(card.location + " " + card.address);
             if (!containsAny(where, plan.locations)) return false;
         }
+        if (!plan.departments.isEmpty()) {
+            // 조직 단위는 요건이다. 팀을 물었는데 다른 팀 사람을 섞어 주면 답이 아니라 소음이다.
+            String unit = SearchFieldVocabulary.normalize(card.department);
+            if (!containsAny(unit, plan.departments)) return false;
+        }
         if (!plan.titles.isEmpty() && plan.isStrict()) {
             // Word by word, not substring: 이사 must not match 대표이사, which is a different job.
             List<String> titleWords = titleWords(card);
