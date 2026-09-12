@@ -35,7 +35,9 @@ class HjpApplication : Application() {
     private var liveActivities = 0
     private var sessionTouched = false
 
-    val container: AppContainer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { AppContainer(this) }
+    val container: AppContainer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AppContainer(this).also { it.onSessionUsed = ::markSessionUsed }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -59,8 +61,11 @@ class HjpApplication : Application() {
                 val coldEntry = !recreatedByConfigChange && liveActivities == 0
                 if (coldEntry && sessionTouched) {
                     // Runs inside Activity.onCreate, before the first composition, so a dismissed
-                    // task can never show the previous conversation.
+                    // task can never show the previous conversation. The transcript now outlives
+                    // the screen, so clearing the kernel's memory alone would leave the old
+                    // bubbles on screen with nothing behind them.
                     runBlocking { container.resetSession() }
+                    container.clearChatTranscript()
                     sessionTouched = false
                 }
             }
@@ -78,6 +83,9 @@ class HjpApplication : Application() {
             if (activity !is MainActivity) return
             if (activity.isChangingConfigurations) return
             if (!activity.isFinishing) return
+            // Called on the main thread, so the transcript is cleared in place; the kernel's own
+            // reset is suspending and goes to the application scope as before.
+            container.clearChatTranscript()
             applicationScope.launch {
                 container.resetSession()
                 sessionTouched = false

@@ -7,6 +7,8 @@ import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.BusinessCardUpdateResult
 import com.hjp.tool.contact.KeywordSearchCandidate
 import com.hjp.tool.contact.MutableBusinessCardRepository
+import com.hjp.tool.contact.GluedTermSplitter
+import com.hjp.tool.contact.SearchIndexText
 import com.hjp.tool.contact.StemDisambiguation
 import com.hjp.tool.contact.StoredCardEmbedding
 import java.sql.Connection
@@ -188,9 +190,15 @@ class SqliteContactRepository(dbPath: String) :
             .filter { it.length >= 2 && it.uppercase() !in OPERATORS }
             .distinct()
         // 앱과 **같은 규칙**으로 조각/원본을 가린다(StemDisambiguation).
-        val terms = StemDisambiguation.resolve(StemDisambiguation.dropRedundantGluedDigits(analyzed)) { term ->
+        val inIndex: suspend (String) -> Boolean = { term ->
             runCatching { matchIds(term, 1).isNotEmpty() }.getOrDefault(false)
         }
+        val resolved = StemDisambiguation.resolve(
+            StemDisambiguation.dropRedundantGluedDigits(analyzed),
+            inIndex,
+        )
+        // 붙여 쓴 질의를 색인에 실재하는 낱말로 가른다 — 앱과 같은 규칙.
+        val terms = GluedTermSplitter.split(resolved, inIndex)
         if (terms.isEmpty()) return emptyList()
 
         val ranked = LinkedHashMap<String, String>()
@@ -340,19 +348,20 @@ class SqliteContactRepository(dbPath: String) :
     }
 }
 
-/** 앱의 `BusinessCardDao.toFtsEntity` 와 같은 인덱스 문자열. */
-internal fun BusinessCardRecord.searchableText(): String = buildString {
-    append(
-        listOf(
-            name, nameEn, company, title, department, industry, location,
-            // 앱과 같은 칸. address·email 이 빠지면 "판교" 같은 주소 안의 낱말이
-            // 키워드로 잡히지 않는다.
-            address, email, memo,
-            tags.joinToString(" "), phone, mobile,
-        ).joinToString(" "),
-    )
-    append(' ')
-    append(phone.filter(Char::isDigit))
-    append(' ')
-    append(mobile.filter(Char::isDigit))
-}.lowercase()
+/** 앱과 **같은** 인덱스 문자열. 규칙은 [SearchIndexText] 한 곳에만 있다. */
+internal fun BusinessCardRecord.searchableText(): String = SearchIndexText.build(
+    name = name,
+    nameEn = nameEn,
+    company = company,
+    title = title,
+    department = department,
+    industry = industry,
+    location = location,
+    address = address,
+    email = email,
+    website = website,
+    memo = memo,
+    tags = tags.joinToString(" "),
+    phone = phone,
+    mobile = mobile,
+)

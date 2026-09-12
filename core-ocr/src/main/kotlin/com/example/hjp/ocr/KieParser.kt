@@ -61,6 +61,30 @@ class KieParser private constructor(
         private val PHONE = Regex("""(?:0\d{1,2}|1\d{3})[-. ]?\d{3,4}[-. ]?\d{4}""")
         private val URL_PREFIX = Regex("""(?i)^\s*(W|Web|Website|Homepage)[.: ]*""")
         private val ADDR_PREFIX = Regex("""(?i)^\s*(Address|주소)[.: ]*""")
+        /** 디자인용 선행 기호. "↑ 서울시…", ") 010-…" 처럼 검출에 딸려 들어온다. */
+        private val JUNK_PREFIX = Regex("""^[^\w가-힣(]+""")
+
+        /** "E." "M." "A:" 같은 한 글자 라벨. 필드 판별에 쓰고 나면 값에는 남기지 않는다. */
+        private val ONE_LETTER_LABEL = Regex("""^[A-Za-z]\s*[.:]\s*""")
+
+        /** 인식기가 앞에 0 을 하나 더 붙이는 일이 있다: "0010-…" -> "010-…". */
+        private val DOUBLED_LEADING_ZERO = Regex("""^00(?=\d)""")
+
+        /**
+         * 값에서 군더더기를 걷어낸다(`OCR/app.py` 의 `_clean` 이식본).
+         *
+         * 라벨은 **필드 판별 신호로 쓰고 나서 버린다** — "M." 을 보고 휴대폰으로 배정했다면
+         * 그 "M." 이 전화번호 값 안에 남을 이유가 없다. 남으면 그대로 저장돼서 나중에 그
+         * 번호로 검색해도 안 맞는다.
+         */
+        internal fun clean(raw: String): String {
+            var s = raw.trim()
+            s = JUNK_PREFIX.replaceFirst(s, "").trim()
+            s = ONE_LETTER_LABEL.replaceFirst(s, "").trim()
+            s = DOUBLED_LEADING_ZERO.replaceFirst(s, "0")
+            return s.trim { c -> c.isWhitespace() || c in "↑↓·°" }
+        }
+
         private val LABEL_ONLY = Regex(
             """(?i)^(W|Web|Website|T|Tel|M|Mobile|F|Fax|E|E-?mail|H|HP|Address|주소|전화|휴대폰|팩스|이메일)[.:]?$""")
 
@@ -126,22 +150,48 @@ class KieParser private constructor(
         }
     }
 
-    /** Regions -> UI fields, same Field type/ordering contract as [CardParser]. */
-    fun parse(regions: List<OcrPipeline.Region>): List<CardParser.Field> {
+    /**
+     * Regions -> UI fields, same Field type/ordering contract as [CardParser].
+     *
+     * 분류와 UI 매핑 **사이에** [FieldGrouping] 이 들어간다. 검출기는 글줄 단위로 자르는데
+     * 명함의 칸과 글줄은 일대일이 아니라서, 그 사이를 메우지 않으면 줄바꿈된 주소가 반 토막
+     * 나고 "TEL … FAX …" 한 줄이 통째로 전화번호 칸에 들어간다.
+     *
+     * @param imageWidth 원본 이미지 가로 픽셀. 같은 열인지 판정할 때 쓴다 — 고정 픽셀 수로
+     *   정하면 해상도가 바뀔 때마다 틀리므로 이미지 너비에 대한 비율로 본다.
+     */
+    fun parse(
+        regions: List<OcrPipeline.Region>,
+        imageWidth: Int = 0,
+        imageHeight: Int = 0,
+    ): List<CardParser.Field> {
         val texts = regions.map { it.text.trim() }
-        val fields = classify(texts)
+        val labelled = texts.zip(classify(texts)).mapIndexed { index, (text, field) ->
+            FieldGrouping.Labeled(regions[index].poly, text, field, regions[index].score)
+        }
+        // 이미지 크기를 모르면(옛 호출부) 검출된 글상자들이 차지한 너비로 대신한다.
+        // 합치기 자체를 건너뛰면 줄바꿈된 주소가 그대로 반 토막 난다.
+        val width = if (imageWidth > 0) imageWidth else {
+            regions.flatMap { it.poly }.maxOfOrNull { it.x }?.toInt() ?: 0
+        }
+        val height = if (imageHeight > 0) imageHeight else {
+            regions.flatMap { it.poly }.maxOfOrNull { it.y }?.toInt() ?: 0
+        }
+        val grouped = FieldGrouping.postprocess(labelled, width, height)
         val out = ArrayList<CardParser.Field>()
-        for ((t, field) in texts.zip(fields)) {
+        for (entry in grouped) {
+            val t = entry.text
+            val field = entry.field
             if (t.length < 2 || LABEL_ONLY.matches(t)) continue
             val (icon, label, _) = FIELD_UI[field] ?: continue
             val value = when (field) {
                 "email" -> EMAIL.find(t)?.value ?: t
-                "mobile", "tel_office", "fax" -> PHONE.find(t)?.value ?: t
-                "address_ko" -> t.replace(ADDR_PREFIX, "")
-                    .trim { c -> c.isWhitespace() || c in "↑↓·°" }
+                "mobile", "tel_office", "fax" -> PHONE.find(t)?.value ?: clean(t)
+                "address_ko" -> clean(t.replace(ADDR_PREFIX, ""))
                 "website" -> t.replace(URL_PREFIX, "").trim().ifEmpty { t }
-                else -> t
+                else -> clean(t)
             }
+            if (value.isBlank()) continue
             out.add(CardParser.Field(icon, label, value))
         }
         return out.sortedBy { f ->

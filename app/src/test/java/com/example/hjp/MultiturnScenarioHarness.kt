@@ -25,6 +25,8 @@ import com.hjp.tool.android.OpenComposePlugin
 import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.searchlookup.QueryAnalyzer
 import com.hjp.tool.contact.KeywordSearchCandidate
+import com.hjp.tool.contact.GluedTermSplitter
+import com.hjp.tool.contact.SearchIndexText
 import com.hjp.tool.contact.StemDisambiguation
 import com.hjp.tool.contact.BusinessCardKeywordIndex
 import com.hjp.tool.contact.BusinessCardUpdateResult
@@ -369,9 +371,12 @@ class MultiturnScenarioHarness(
                 .distinct()
             // 앱·러너와 같은 규칙으로 조각/원본을 가린다. 여기만 빼면 시험이 실제보다
             // 느슨한 조건으로 검색하게 된다.
-            val terms = StemDisambiguation.resolve(analyzed) { term ->
-                cards.any { searchableText(it).contains(term) }
+            val inIndex: suspend (String) -> Boolean = { term ->
+                cards.any { card -> searchableText(card).split(" ").any { it == term } }
             }
+            val resolved = StemDisambiguation.resolve(analyzed, inIndex)
+            // 붙여 쓴 질의를 가르는 규칙도 앱·러너와 같아야 한다.
+            val terms = GluedTermSplitter.split(resolved, inIndex)
             if (terms.isEmpty()) return emptyList()
             val ranked = linkedMapOf<String, String>()
             fun collect(tier: String, matches: (String) -> Boolean) {
@@ -393,11 +398,15 @@ class MultiturnScenarioHarness(
             }
         }
 
-        private fun searchableText(card: BusinessCardRecord): String = listOf(
-            card.name, card.nameEn, card.company, card.title, card.department,
-            card.industry, card.location, card.address, card.email, card.memo,
-            card.tags.joinToString(" "), card.phone, card.mobile,
-        ).joinToString(" ").lowercase()
+        // 앱·러너와 **같은** 색인 문자열(바이그램 포함). 시험만 자기 규칙을 쓰면
+        // 정작 운영에서 무엇이 색인되는지는 확인하지 못한다.
+        private fun searchableText(card: BusinessCardRecord): String = SearchIndexText.build(
+            name = card.name, nameEn = card.nameEn, company = card.company,
+            title = card.title, department = card.department, industry = card.industry,
+            location = card.location, address = card.address, email = card.email,
+            website = card.website, memo = card.memo, tags = card.tags.joinToString(" "),
+            phone = card.phone, mobile = card.mobile,
+        )
 
         override suspend fun update(
             cardId: String,

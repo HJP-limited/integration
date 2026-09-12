@@ -282,6 +282,34 @@ class AppContainer(context: Context) : AutoCloseable {
         if (BuildConfig.DEBUG) reactKernel.diagnostics.last?.asMap()?.forEach(::put)
     }
 
+    /**
+     * 화면에 보이는 대화. 커널 세션과 같은 자리에 둔다 — 둘의 수명이 다르면 사람이 읽는
+     * 대화와 모델이 기억하는 대화가 어긋난다. 자세한 이유는 [ChatSession] 참고.
+     *
+     * lazy 인 이유는 [ChatSession] 이 이 컨테이너를 되잡기 때문이다. 생성자에서 만들면
+     * 아직 다 만들어지지 않은 `this` 를 넘기게 된다.
+     */
+    /**
+     * 대화가 한 번이라도 쓰였음을 앱에 알리는 통로. [HjpApplication] 이 채운다.
+     *
+     * 앱 수명 규칙("작업 목록에서 지웠다가 다시 열면 빈 대화")이 이 신호에 달려 있는데,
+     * Agent_0910 에서는 `AgentViewModel` 이 화면을 만들 때 함께 넘겨받던 것이다. 통합하면서
+     * 그 클래스가 빠지자 [HjpApplication.markSessionUsed] 는 정의만 남고 부르는 곳이 없어져
+     * 규칙이 조용히 죽어 있었다.
+     */
+    var onSessionUsed: () -> Unit = {}
+
+    private val chatSession = lazy(LazyThreadSafetyMode.NONE) { ChatSession(this) }
+    internal val chat: ChatSession get() = chatSession.value
+
+    /**
+     * 화면의 말풍선을 비운다. 대화를 아직 연 적이 없으면 아무 일도 하지 않는다 —
+     * 비우려고 [ChatSession] 을 새로 만드는 건 앞뒤가 맞지 않는다.
+     */
+    fun clearChatTranscript() {
+        if (chatSession.isInitialized()) chat.clearTranscript()
+    }
+
     /** Replaces the session atomically and returns the new generation. */
     suspend fun resetSession(): Long = engine.resetSession()
 
@@ -296,6 +324,7 @@ class AppContainer(context: Context) : AutoCloseable {
     fun answerConfirmation(accepted: Boolean) = confirmationCoordinator.answer(accepted)
 
     override fun close() {
+        if (chatSession.isInitialized()) chat.close()
         sessionManager.close()
         if (structuredKernel.isInitialized()) structuredKernel.value.close()
         if (embeddingGemmaEngine.isInitialized()) embeddingGemmaEngine.value.close()

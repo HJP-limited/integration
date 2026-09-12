@@ -88,12 +88,18 @@ public class SearchLookupServiceTest {
     }
 
     @Test
-    public void normalizedPhoneIsSearchableButEmailRemainsOutsideRagKeywordFields() {
+    public void phoneAndEmailAreBothSearchableByKeyword() {
+        // 이메일은 예전에 일부러 빠져 있었고 이 시험이 그걸 고정하고 있었다. 그런데 실기기의
+        // Room 인덱스는 이메일을 넣고 있어서 두 경로가 서로 다른 것을 뒤졌다 — 노트북에서 잰
+        // 값이 폰을 대변해야 한다는 이 프로젝트의 제약을 깨는 어긋남이다.
+        //
+        // 명함에 적힌 것은 전부 찾을 수 있어야 한다. 사람은 기억나는 조각으로 찾고, 그게 어느
+        // 칸이었는지는 기억하지 못한다.
         SearchLookupService service = serviceWithCards(new LocalEmbeddingEngine());
         QueryAnalysis analysis = service.analyzeQuery("test+vip@example.com / 010-1111-2222");
 
         assertTrue(analysis.normalizedQuery.contains("test+vip@example.com"));
-        assertTrue(service.search("test+vip@example.com", 5).isEmpty());
+        assertEquals("C001", service.search("test+vip@example.com", 5).get(0).cardId);
         assertEquals("C001", service.search("010-1111-2222", 5).get(0).cardId);
     }
 

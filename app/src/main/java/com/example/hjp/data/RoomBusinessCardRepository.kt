@@ -5,6 +5,7 @@ import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.BusinessCardUpdateResult
 import com.hjp.tool.contact.BusinessCardEmbeddingStore
 import com.hjp.tool.contact.BusinessCardKeywordIndex
+import com.hjp.tool.contact.GluedTermSplitter
 import com.hjp.tool.contact.KeywordSearchCandidate
 import com.hjp.tool.contact.MutableBusinessCardRepository
 import com.hjp.tool.contact.StemDisambiguation
@@ -85,9 +86,16 @@ class RoomBusinessCardRepository(
         val safeLimit = limit.coerceIn(1, 200)
         // 뗀 조각과 원본 중 색인에 실재하는 쪽만 남긴다. 둘 다 필수 조건으로 넣으면 반드시
         // 하나가 안 맞아 티어가 아래로 밀린다 — 규칙은 StemDisambiguation 에 한 벌만 둔다.
-        val terms = StemDisambiguation.resolve(StemDisambiguation.dropRedundantGluedDigits(TieredFtsQuery.analyze(query))) { term ->
+        val inIndex: suspend (String) -> Boolean = { term ->
             runCatching { dao.searchFtsIds(term, 1).isNotEmpty() }.getOrDefault(false)
         }
+        val resolved = StemDisambiguation.resolve(
+            StemDisambiguation.dropRedundantGluedDigits(TieredFtsQuery.analyze(query)),
+            inIndex,
+        )
+        // 붙여 쓴 질의("판교개발자")를 색인에 실재하는 낱말로 가른다. 한국어는 공백 없이도
+        // 말이 되는데 FTS 는 공백에서만 자르므로, 이게 없으면 키워드 결과가 0건이었다.
+        val terms = GluedTermSplitter.split(resolved, inIndex)
         if (terms.isEmpty()) return emptyList()
         val ranked = linkedMapOf<String, String>()
         suspend fun collect(match: String?, tier: String) {
@@ -122,7 +130,15 @@ class RoomBusinessCardRepository(
     }
 
     private suspend fun seedIfEmpty() {
-        if (dao.count() > 0) return
+        if (dao.count() > 0) {
+            // 명함은 있는데 색인이 비어 있으면 다시 만든다. 색인 규칙이 바뀌면
+            // 마이그레이션이 색인만 비우고(카드는 그대로) 여기서 코틀린으로 다시 채운다 —
+            // 색인 문자열을 만드는 규칙이 SQL 에도 한 벌 더 있으면 둘이 갈라지기 때문이다.
+            if (dao.countFts() == 0) {
+                seedMutex.withLock { if (dao.countFts() == 0) dao.rebuildFts() }
+            }
+            return
+        }
         seedMutex.withLock {
             if (dao.count() > 0) return@withLock
             val seedCards = seedRepository.loadAll().map { it.toBusinessCardEntity(json) }

@@ -136,7 +136,13 @@ object ContactToolContracts {
         capabilityId = ToolCapabilityId("contact.search"),
         modelName = "search_contacts",
         version = ContractVersion(1, 1),
-        description = "이름, 회사, 직함, 부서, 지역, 업종, 메모, 태그를 기준으로 로컬 명함을 검색합니다. 상세 연락처는 get_contact로 조회합니다.",
+        // 설명이 실제보다 좁으면 모델이 쓸 수 있는 도구를 안 쓴다. 색인은 명함에 적힌 것을
+        // 전부 뒤지는데 설명에는 이름·회사·직함 정도만 적혀 있어서, 주소나 메모로 찾는
+        // 질문을 이 도구로 보내지 않을 이유를 준다. 색인과 같은 목록을 적는다.
+        description = "이름(한글·영문), 회사, 직함, 부서, 지역, 주소, 업종, 메모, 태그, " +
+            "이메일, 전화번호, 웹사이트 — 명함에 적힌 모든 내용을 기준으로 로컬 명함을 " +
+            "검색합니다. 주소의 동네 이름이나 메모에 적어 둔 말처럼 **어느 칸인지 모르는 " +
+            "조각**으로도 찾을 수 있습니다. 상세 연락처는 get_contact로 조회합니다.",
         inputSchema = SEARCH_INPUT_SCHEMA,
         outputSchema = SEARCH_OUTPUT_SCHEMA,
         effect = ToolEffect.READ_ONLY,

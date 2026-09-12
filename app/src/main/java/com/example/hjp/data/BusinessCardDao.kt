@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import com.hjp.tool.contact.SearchIndexText
 import androidx.room.Update
 
 @Dao
@@ -45,6 +46,9 @@ interface BusinessCardDao {
     @Query("DELETE FROM business_cards WHERE id = :cardId")
     suspend fun deleteCard(cardId: String)
 
+    @Query("SELECT count(*) FROM business_cards_fts")
+    suspend fun countFts(): Int
+
     @Transaction
     suspend fun rebuildFts() {
         clearFts()
@@ -80,30 +84,23 @@ private fun BusinessCardEntity.toFtsEntity(rowId: Int): BusinessCardFtsEntity =
     BusinessCardFtsEntity(
         rowId = rowId,
         cardId = id,
-        searchableText = buildString {
-            append(
-                listOf(
-                    name,
-                    nameEn,
-                    company,
-                    title,
-                    department,
-                    industry,
-                    location,
-                    // 주소·이메일이 빠져 있었다. "판교"는 location("경기도 성남시 분당구")이
-                    // 아니라 address 에만 있어서, 판교 명함 9장이 키워드로 한 건도 안 잡히고
-                    // 의미검색만 남아 엉뚱한 지역이 나왔다(실측). 이메일도 같은 이유로 넣는다.
-                    address,
-                    email,
-                    memo,
-                    tagsJson,
-                    phone,
-                    mobile,
-                ).joinToString(" "),
-            )
-            append(' ')
-            append(phone.filter(Char::isDigit))
-            append(' ')
-            append(mobile.filter(Char::isDigit))
-        }.lowercase(),
+        // 색인 문자열 규칙은 [SearchIndexText] 한 곳에만 있다 — 노트북 러너도 같은 것을 부른다.
+        // 예전에는 앱과 데스크톱이 각자 같은 목록을 손으로 들고 있었고, 실제로 한쪽에만
+        // 주소·이메일이 빠져 있던 적이 있다.
+        searchableText = SearchIndexText.build(
+            name = name,
+            nameEn = nameEn,
+            company = company,
+            title = title,
+            department = department,
+            industry = industry,
+            location = location,
+            address = address,
+            email = email,
+            website = website,
+            memo = memo,
+            tags = tagsJson,
+            phone = phone,
+            mobile = mobile,
+        ),
     )

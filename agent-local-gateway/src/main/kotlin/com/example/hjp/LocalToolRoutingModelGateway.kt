@@ -128,7 +128,8 @@ private class LocalToolRoutingModelSession(
         issuedCallIds.clear()
         val text = input.text
         turnContext = input.turnContext
-        val action = LocalPromptRouter.parse(text)?.let { withImplicitTarget(it, input.turnContext) }
+        val action = (LocalPromptRouter.parse(text) ?: bareLookup(text, input.turnContext))
+            ?.let { withImplicitTarget(it, input.turnContext) }
         val missing = action?.missingMessage()
         if (action == null) {
             pendingAction = null
@@ -191,6 +192,25 @@ private class LocalToolRoutingModelSession(
                 else contactLookupStart(action.contactQuery.orEmpty())
             }
         }
+    }
+
+    /**
+     * 동사 없이 낱말만 던진 검색.
+     *
+     * "대전 변호사", "손다은" 처럼 사람들이 실제로 치는 말에는 찾아·검색 같은 동사가 없다.
+     * 위의 프롬프트 규칙들은 동사나 명함·연락처 같은 낱말을 요구해서 이런 입력을 놓치고
+     * 기능 안내문으로 끝냈다(실기기 실측: "판교개발자" 가 아무것도 안 했다).
+     *
+     * 저장소가 **아는 말**을 했을 때만 검색으로 본다 — 카드가 직함으로 쓰는 낱말이거나
+     * 실제 사람 이름일 때다. 둘 다 문장의 철자가 아니라 저장소가 답한 것이라, 아무 말에나
+     * 검색을 돌리지 않는다.
+     */
+    private fun bareLookup(text: String, context: com.hjp.agent.contract.TurnContext): PendingAction? {
+        if (text.isBlank()) return null
+        val namesSomethingWeHold = context.titleMatches.isNotEmpty() ||
+            context.directoryMatches.any { it.identifiesAPerson }
+        if (!namesSomethingWeHold) return null
+        return PendingAction.ContactSearch(text.trim())
     }
 
     /**

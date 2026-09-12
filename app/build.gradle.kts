@@ -89,6 +89,9 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
+    // 촬영한 사진의 EXIF 방향 태그를 읽는다. 카메라는 센서 방향 그대로 저장하고
+    // "돌려서 봐라"를 태그로만 남기는데, BitmapFactory 는 그 태그를 보지 않는다.
+    implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
     // Agent_0910 의 앱 단위 테스트가 device-evidence 의 규칙 계약을 그대로 쓴다.

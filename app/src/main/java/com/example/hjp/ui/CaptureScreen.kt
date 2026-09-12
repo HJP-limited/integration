@@ -3,6 +3,7 @@ package com.example.hjp.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.exifinterface.media.ExifInterface
 import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.ocr.AndroidOcr
 import com.example.hjp.ocr.CardParser
@@ -311,14 +313,61 @@ private fun newCaptureUri(context: Context): Uri {
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
 
+/**
+ * 이미지를 읽어 **똑바로 세워서** 돌려준다.
+ *
+ * 카메라는 폰을 어떻게 들고 찍었든 센서 방향 그대로 저장하고, "보여 줄 때 이만큼 돌려라"를
+ * EXIF Orientation 태그로만 남긴다. `BitmapFactory` 는 그 태그를 보지 않으므로, 갤러리에서는
+ * 똑바로 보이는 사진이 여기서는 90도 누운 채로 들어온다.
+ *
+ * 이게 화면만의 문제가 아닌 이유: 이 비트맵이 그대로 OCR 로 들어간다. 누운 한글을 인식시키면
+ * 검출은 되는데 글자가 엉킨다. 읽는 자리에서 바로 세우는 게 맞다 — 인식과 미리보기가 같은
+ * 비트맵을 쓰므로 한 번만 세우면 둘 다 맞는다.
+ */
 private fun decodeBitmap(context: Context, uri: Uri): Bitmap? =
     try {
-        context.contentResolver.openInputStream(uri).use { input ->
+        val decoded = context.contentResolver.openInputStream(uri).use { input ->
             // ARGB_8888 로 강제한다 — OpenCV 의 bitmapToMat 이 하드웨어 비트맵을 못 읽는다.
             BitmapFactory.decodeStream(input, null, BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             })
         }
+        decoded?.let { uprightByExif(context, uri, it) }
     } catch (_: Throwable) {
         null
     }
+
+/**
+ * EXIF 태그가 시키는 대로 회전·반전한다. 태그가 없거나 읽지 못하면 원본을 그대로 돌려준다 —
+ * 방향을 짐작해서 돌리면 멀쩡한 사진을 눕히게 된다.
+ */
+private fun uprightByExif(context: Context, uri: Uri, bitmap: Bitmap): Bitmap {
+    val orientation = try {
+        context.contentResolver.openInputStream(uri).use { input ->
+            input?.let { ExifInterface(it).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
+        }
+    } catch (_: Throwable) {
+        null
+    } ?: return bitmap
+
+    val matrix = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+        // 전치(transpose)/역전치(transverse): 대각선 반사. 회전 + 좌우반전으로 같아진다.
+        ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.postScale(-1f, 1f) }
+        ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(270f); matrix.postScale(-1f, 1f) }
+        else -> return bitmap
+    }
+    return try {
+        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            .also { if (it !== bitmap) bitmap.recycle() }
+    } catch (_: OutOfMemoryError) {
+        // 큰 사진이면 회전 사본을 못 만들 수 있다. 누운 사진이라도 없는 것보다 낫다.
+        bitmap
+    }
+}

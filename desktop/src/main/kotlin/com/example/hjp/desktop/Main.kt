@@ -343,7 +343,9 @@ private fun recognize(imagePath: String, modelDirArg: String?): List<CardParser.
     val startedAt = System.currentTimeMillis()
     val regions = pipeline.run(bgr)
     val ocrMs = System.currentTimeMillis() - startedAt
-    val fields = kie?.parse(regions) ?: CardParser.parse(regions)
+    // 앱과 같은 값을 넘긴다 — 주소 합치기가 이미지 너비 비율을 보므로, 여기서 빠뜨리면
+    // 노트북과 폰의 인식 결과가 갈린다.
+    val fields = kie?.parse(regions, bgr.cols(), bgr.rows()) ?: CardParser.parse(regions)
     bgr.release()
 
     println("이미지: ${image.name} · 인식 영역 ${regions.size}개 · OCR ${ocrMs}ms")

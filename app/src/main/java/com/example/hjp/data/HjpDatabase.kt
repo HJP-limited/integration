@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [BusinessCardEntity::class, CardEmbeddingEntity::class, BusinessCardFtsEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class HjpDatabase : RoomDatabase() {
@@ -24,10 +24,26 @@ abstract class HjpDatabase : RoomDatabase() {
                     context.applicationContext,
                     HjpDatabase::class.java,
                     "hjp-agent.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { instance = it }
             }
+
+        /**
+         * 한글 바이그램을 색인에 넣는다. 카드·임베딩은 건드리지 않는다.
+         *
+         * **색인만 비우고 채우지는 않는다.** 채우는 일은 앱이 코틀린으로 한다
+         * ([BusinessCardDao.rebuildFts], 비어 있으면 저장소가 알아서 부른다). 바이그램을
+         * SQL 로 만들려면 색인 문자열 규칙이 SQL 에 한 벌 더 생기는데, 규칙이 두 곳에 있으면
+         * 반드시 갈라진다 — 앱과 노트북이 갈렸던 적이 이미 있다.
+         *
+         * 없던 동안 "판교개발자" 처럼 붙여 쓴 질의가 키워드로 한 건도 안 잡혔다.
+         */
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DELETE FROM business_cards_fts")
+            }
+        }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {

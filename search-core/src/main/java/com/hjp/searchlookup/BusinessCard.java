@@ -61,8 +61,21 @@ public final class BusinessCard {
                 + industry + " " + location + " " + memo + " " + tagLine()).toLowerCase(Locale.KOREAN);
     }
 
+    /**
+     * What a keyword lookup may match on: everything printed on the card.
+     *
+     * Deliberately wider than {@link #searchableText()}. That one feeds the embedding, where an
+     * address is noise — two neighbouring streets have nearly the same vector, so adding them blurs
+     * the axis that answers "AI 하는 사람". A keyword lookup has the opposite need: the person
+     * remembers a fragment — the district in the address, a note they typed — and cannot remember
+     * which field it was in.
+     *
+     * A website is missing here only because this model never carries one: the production Room
+     * index does include it, and this in-memory path is the JVM fallback for fixtures.
+     */
     public String keywordSearchableText() {
-        return (searchableText() + " " + phone + " " + phone.replaceAll("[^0-9]", ""))
+        return (searchableText() + " " + address + " " + email + " "
+                + phone + " " + phone.replaceAll("[^0-9]", ""))
                 .toLowerCase(Locale.KOREAN);
     }
 

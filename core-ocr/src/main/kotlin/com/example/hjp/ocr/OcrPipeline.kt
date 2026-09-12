@@ -226,10 +226,22 @@ class OcrPipeline(assets: OcrAssets) {
         )
         val m = Imgproc.getPerspectiveTransform(src, dst)
         val crop = Mat()
-        Imgproc.warpPerspective(img, crop, m, Size(w.toDouble(), h.toDouble()))
+        // PaddleX 와 같은 플래그다. 기본값(BORDER_CONSTANT/INTER_LINEAR)이면 글자가 잘린
+        // 가장자리에 검은 테두리가 생기고 확대가 거칠어져, 작은 글씨에서 인식이 흔들린다.
+        Imgproc.warpPerspective(
+            img, crop, m, Size(w.toDouble(), h.toDouble()),
+            Imgproc.INTER_CUBIC, Core.BORDER_REPLICATE,
+        )
         m.release()
         if (h > w * 1.5) {
-            Core.rotate(crop, crop, Core.ROTATE_90_CLOCKWISE)
+            // **반시계** 방향이다. 원본(ocr.py `_crop_quad`)이 PaddleX 의 `np.rot90` 과 맞추려고
+            // 그렇게 했는데, 이식본은 시계 방향으로 돌고 있었다 — 세로로 쓴 글줄이 180도 뒤집힌
+            // 채로 인식기에 들어간다.
+            //
+            // 원본에서는 이 선택이 덜 중요했다. 뒤에 텍스트라인 방향 분류기가 0/180 을 바로잡기
+            // 때문이다. 우리는 그 분류기가 없으므로(assets 에 모델이 없다) 여기서 고른 방향이
+            // 곧 결과다. 맞추는 편이 낫다.
+            Core.rotate(crop, crop, Core.ROTATE_90_COUNTERCLOCKWISE)
         }
         return crop
     }

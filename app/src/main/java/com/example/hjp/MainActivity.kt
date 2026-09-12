@@ -152,7 +152,7 @@ internal sealed interface Overlay {
 }
 
 /** 실기기 진단 로그 태그. `adb logcat -s HJP` 로 본다. */
-private const val DIAG_TAG = "HJP"
+internal const val DIAG_TAG = "HJP"
 
 /**
  * 디버그용 질문 주입구.
@@ -190,7 +190,7 @@ internal object DebugQuestion {
  * 말풍선 하나. [cards] 는 **그 턴에 도구가 실제로 찾은** 명함이다 — 화면이 같은 질문으로
  * 다시 검색해서 채우지 않는다(재작성된 질의를 모르는 채 검색하면 답과 카드가 어긋난다).
  */
-private data class ChatMessage(
+internal data class ChatMessage(
     val isUser: Boolean,
     val text: String,
     val modelLabel: String? = null,
@@ -349,91 +349,29 @@ internal fun ChatScreen(
     container: AppContainer,
     modifier: Modifier = Modifier,
 ) {
-    val scope = rememberCoroutineScope()
+    // 대화도, 그 대화를 굴리는 코루틴도 화면이 아니라 [AppContainer] 가 들고 있다.
+    // 화면은 보여 주고 입력만 받는다 — 이유는 [ChatSession] 에 적어 뒀다(요약하면:
+    // 메일·일정 도구가 다른 앱을 열면 이 화면이 물러나는데, 턴이 화면에 매여 있으면
+    // 그 순간 취소된다).
+    val session = container.chat
+    val messages = session.messages
+    val asking = session.busy
+
     var input by remember { mutableStateOf("") }
-    var asking by remember { mutableStateOf(false) }
     var selectedCard by remember { mutableStateOf<BusinessCardRecord?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
-    // 멀티턴 세션은 [AppContainer] 가 프로세스 하나에 하나만 들고 있다. 화면이 따로
-    // 만들지 않는다 — 탭을 옮기거나 화면이 다시 그려져도 대화가 이어져야 한다.
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessage(isUser = false, text = "명함에 대해 문장으로 물어보세요.\n예) \"판교에 있는 AI 개발자 찾아줘\"")
-        )
-    }
     val listState = rememberLazyListState()
 
-    // 질문 하나를 처리한다. 화면의 전송 버튼과 **디버그 인텐트**가 같이 쓴다.
+    // 디버그 인텐트로 들어온 질문을 태운다(앱을 껐다 켜지 않으므로 세션이 유지된다).
     //
     // 인텐트 진입점을 둔 이유: `adb shell input text` 가 한글을 못 친다
     // (NullPointerException). 그래서 실기기에서 무엇이 일어나는지 확인하려면 사람이
-    // 손으로 타이핑하는 수밖에 없었다. 아래 DebugQuestion 으로 밀어 넣으면
-    // 노트북에서 시나리오를 그대로 태울 수 있고, 세션이 유지되므로 멀티턴도 된다.
-    fun send(question: String) {
-        if (question.isBlank() || asking) return
-        messages.add(ChatMessage(isUser = true, text = question))
-        // 이 턴에 도구가 찾은 명함만 답변 아래 붙인다. 안 비우면 검색을 안 한 턴이
-        // 앞 턴의 카드를 물려받아, 답과 카드가 어긋난 채로 남는다.
-        container.contactBackend.clear()
-        scope.launch {
-            asking = true
-            status = "요청을 해석하고 있어요."
-            val startedAt = System.currentTimeMillis()
-            // 커널이 모델을 부르고 도구를 고른다. 화면은 흘러나오는 사건만 모은다 —
-            // 어떤 도구를 언제 쓸지는 여기서 정하지 않는다(Agent_0910 의 AgentKernel 담당).
-            val answer = StringBuilder()
-            var failure: String? = null
-            runCatching {
-                container.engine.runTurn(question).collect { event ->
-                    when (event) {
-                        is AgentEvent.TurnStarted -> Unit
-                        is AgentEvent.ToolStarted -> status = event.messageKo
-                        is AgentEvent.ToolFinished -> status = event.messageKo
-                        is AgentEvent.ConfirmationRequested -> status = event.promptKo
-                        is AgentEvent.PermissionRequested ->
-                            status = "필요한 권한: " + event.permissions.joinToString()
-                        is AgentEvent.Token -> answer.append(event.text)
-                        is AgentEvent.FinalMessage ->
-                            if (answer.isBlank()) answer.append(event.text)
-                        is AgentEvent.UserError -> failure = event.messageKo
-                    }
-                }
-            }.onFailure { failure = it.message ?: it.javaClass.simpleName }
-            asking = false
-            status = null
-
-            val cards = container.contactBackend.lastHits
-            val text = failure ?: answer.toString().trim().ifBlank { "답변을 만들지 못했어요." }
-            // 실기기 진단 로그. `adb logcat -s HJP` 로 본다. 폰에서 무슨 일이 일어났는지
-            // 이게 없으면 화면을 눈으로 읽는 수밖에 없다.
-            android.util.Log.i(
-                DIAG_TAG,
-                buildString {
-                    append("q=").append(question)
-                    append(" | ms=").append(System.currentTimeMillis() - startedAt)
-                    append(" | cards=").append(cards.joinToString(",") { it.name })
-                    append(" | answer=").append(text.replace('\n', ' ').take(120))
-                    failure?.let { append(" | error=").append(it) }
-                },
-            )
-            messages.add(
-                ChatMessage(
-                    isUser = false,
-                    text = text,
-                    modelLabel = container.deployment.artifactId,
-                    cards = cards,
-                    error = failure,
-                )
-            )
-        }
-    }
-
-    // 디버그 인텐트로 들어온 질문을 태운다(앱을 껐다 켜지 않으므로 세션이 유지된다).
+    // 손으로 타이핑하는 수밖에 없었다. 여기로 밀어 넣으면 노트북에서 시나리오를 그대로
+    // 태울 수 있고, 세션이 유지되므로 멀티턴도 된다.
     LaunchedEffect(DebugQuestion.pending, asking) {
         val q = DebugQuestion.pending
         if (q != null && !asking) {
             DebugQuestion.consume()
-            send(q)
+            session.send(q)
         }
     }
 
@@ -454,18 +392,12 @@ internal fun ChatScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("채팅", style = MaterialTheme.typography.titleLarge)
-            // 멀티턴 기억을 초기화하고 대화를 처음부터 다시 시작한다.
+            // 멀티턴 기억을 초기화하고 대화를 처음부터 다시 시작한다. 화면의 말풍선과
+            // 커널의 기억을 [ChatSession] 이 한 번에 비운다 — 한쪽만 비우면 사람이 보는
+            // 대화와 모델이 기억하는 대화가 어긋난다.
             TextButton(
                 enabled = !asking,
-                onClick = {
-                    messages.clear()
-                    messages.add(
-                        ChatMessage(isUser = false, text = "명함에 대해 문장으로 물어보세요.\n예) \"판교에 있는 AI 개발자 찾아줘\"")
-                    )
-                    // 커널이 세션을 원자적으로 갈아끼운다 — 진행 중이던 턴이 새 세션에
-                    // 끼어들지 못하도록 세대(generation)를 올린다.
-                    scope.launch { container.resetSession() }
-                },
+                onClick = { session.reset() },
             ) {
                 Text("새 대화")
             }
@@ -482,7 +414,9 @@ internal fun ChatScreen(
                 ChatBubble(message, onCardClick = { selectedCard = it })
             }
             if (asking) {
-                item { TypingBubble() }
+                // 진행 상황은 커널이 흘려보내는 사건 그대로다(어느 도구가 도는 중인지).
+                // 19초 걸리는 턴을 "답변 생성 중..." 한 줄로만 두면 멈춘 것과 구별되지 않는다.
+                item { TypingBubble(session.status) }
             }
         }
 
@@ -500,20 +434,59 @@ internal fun ChatScreen(
                 placeholder = { Text("질문을 입력하세요") },
                 maxLines = 3,
             )
-            Button(
-                enabled = !asking && input.isNotBlank(),
-                onClick = {
-                    val q = input.trim()
-                    input = ""
-                    send(q)
-                },
-            ) {
-                Text("전송")
+            // 도는 중에는 같은 자리가 중단 버튼이 된다. 온디바이스 모델은 한 턴이 20초쯤
+            // 걸리는데, 잘못 보낸 질문을 끝까지 기다릴 수밖에 없는 것은 막다른 길이다.
+            if (asking) {
+                OutlinedButton(onClick = { session.cancelTurn() }) {
+                    Text("중단")
+                }
+            } else {
+                Button(
+                    enabled = input.isNotBlank(),
+                    onClick = {
+                        val q = input.trim()
+                        input = ""
+                        session.send(q)
+                    },
+                ) {
+                    Text("전송")
+                }
             }
         }
     }
     selectedCard?.let { card ->
         CardDetailDialog(card, onDismiss = { selectedCard = null })
+    }
+    // 실행 전 승인. 이게 뜨는 동안 커널은 대답을 기다리며 멈춰 있다 — 닫기만 하고
+    // 답하지 않는 길을 두지 않는 이유다(dismiss 도 거절로 답한다).
+    session.confirmation?.let { prompt ->
+        ConfirmationDialog(
+            promptKo = prompt,
+            onAnswer = { accepted -> session.answerConfirmation(accepted) },
+        )
+    }
+}
+
+@Composable
+private fun ConfirmationDialog(promptKo: String, onAnswer: (Boolean) -> Unit) {
+    Dialog(onDismissRequest = { onAnswer(false) }) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("확인이 필요해요", style = MaterialTheme.typography.titleMedium)
+                Text(promptKo, style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(onClick = { onAnswer(false) }, modifier = Modifier.weight(1f)) {
+                        Text("취소")
+                    }
+                    Button(onClick = { onAnswer(true) }, modifier = Modifier.weight(1f)) {
+                        Text("실행")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -572,14 +545,14 @@ private fun ChatBubble(message: ChatMessage, onCardClick: (BusinessCardRecord) -
 }
 
 @Composable
-private fun TypingBubble() {
+private fun TypingBubble(status: String? = null) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         Surface(
             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp),
             color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
             Text(
-                "답변 생성 중...",
+                status ?: "답변 생성 중...",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),

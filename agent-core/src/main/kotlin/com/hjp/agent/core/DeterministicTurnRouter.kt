@@ -209,6 +209,32 @@ object DeterministicTurnRouter {
             )
         }
 
+        // 직전 결과 **집합 전체**를 가리키는 발화는 새 검색이 아니다.
+        //
+        // "그 사람들 이름 알려줘" 는 단수 focus 치환으로 잡히지 않아(가리키는 게 한 명이
+        // 아니다) 그대로 검색으로 내려갔고, 지시어가 검색어가 돼 무관한 카드를 물어왔다.
+        // 가리킬 집합이 실제로 있을 때만 settle 한다 — 없으면 평소대로 검색한다.
+        if (ConversationalFollowup.pointsAtPreviousGroup(raw)) {
+            ConversationalFollowup.groupAnswer(context)?.let { answer ->
+                return Decision(DialogueAct.CONTACT_DETAIL, TurnRoutePlan.AnswerFromHistory(answer))
+            }
+        }
+
+        // 직전 답변에 대한 정정/확인("5명인데?", "아닌데")에는 검색할 내용이 아예 없다.
+        //
+        // 그런데도 검색으로 내려가면 지시어와 수량이 검색어가 돼 엉뚱한 카드를 근거로 답을
+        // 짓고, 사용자는 자기가 정정한 말이 무시당한 것을 본다(상류 ryeong 실측). 되돌릴
+        // 답이 있을 때만 settle 한다 — 첫 턴부터 이런 말이 나오면 되짚을 것이 없으므로
+        // 평소대로 처리한다.
+        if (ConversationalFollowup.isReactionToLastAnswer(raw)) {
+            ConversationalFollowup.lastAnswer(context)?.let { previous ->
+                return Decision(
+                    DialogueAct.QUOTED_RECALL,
+                    TurnRoutePlan.AnswerFromHistory("이전 답변 기준입니다.\n" + previous),
+                )
+            }
+        }
+
         // A non-fresh field question about the active contact may be answered without a new tool
         // call only when that exact display field was projected by a successful get_contact.
         // This is deliberately before the model: otherwise a short form such as "어느 지역이야?"
@@ -421,7 +447,7 @@ object DeterministicTurnRouter {
         // must not be read as "the second search result".
         val ordinal = ordinalIndex(raw, squeezed)
         if (ordinal != null && personWords.any(raw::contains)) {
-            val candidate = context.memory.candidateContacts.getOrNull(ordinal)
+            val candidate = context.memory.candidateContacts.atOrdinal(ordinal)
                 ?: return Decision(
                     DialogueAct.CLARIFICATION_REQUIRED,
                     TurnRoutePlan.Clarify(
@@ -613,7 +639,7 @@ object DeterministicTurnRouter {
         context: TurnContext,
     ): ContactCandidate? {
         ordinalIndex(text, text.noSpaces())?.let { ordinal ->
-            return context.memory.candidateContacts.getOrNull(ordinal)
+            return context.memory.candidateContacts.atOrdinal(ordinal)
         }
         val squeezed = text.noSpaces()
         return context.memory.candidateContacts.firstOrNull { candidate ->
@@ -624,7 +650,7 @@ object DeterministicTurnRouter {
     /** Candidate ids designated by the rejected half of a replacement. */
     private fun resolveCandidateIds(text: String, context: TurnContext): Set<String> {
         ordinalIndex(text, text.noSpaces())?.let { ordinal ->
-            return setOfNotNull(context.memory.candidateContacts.getOrNull(ordinal)?.cardId)
+            return setOfNotNull(context.memory.candidateContacts.atOrdinal(ordinal)?.cardId)
         }
         val squeezed = text.noSpaces()
         return context.memory.candidateContacts
@@ -809,12 +835,32 @@ object DeterministicTurnRouter {
         return knownPeople(context).any { squeezed.contains(it.name.noSpaces()) }
     }
 
-    private fun ordinalIndex(raw: String, squeezed: String): Int? = when {
-        squeezed.contains("첫번째") || raw.contains("1번") -> 0
-        squeezed.contains("두번째") || raw.contains("2번") -> 1
-        squeezed.contains("세번째") || raw.contains("3번") -> 2
-        else -> null
+    /**
+     * 직전 결과 **집합 안에서** 몇 번째를 가리키는지. 0부터 센다.
+     *
+     * 세 개까지만 세던 때가 있었다(첫·두·세). 그 위는 아무 규칙에도 걸리지 않아 새 검색으로
+     * 빠졌는데, 상류(ryeong)가 실기기에서 재고 고쳐 둔 결함이 바로 그것이다 — "대전에 있는
+     * 변호사"로 2명을 찾은 뒤 "두 번째 사람 연락처"가 무관한 5명을 데려오는 식이다. 네 번째
+     * 부터는 여기서도 같은 일이 났다.
+     *
+     * 그래서 세는 방법을 셋 둔다: 숫자("5번째", "3번"), 낱말(첫~열), 그리고 "마지막".
+     * 숫자를 먼저 본다 — "10번째"를 낱말 규칙이 "열 번째"로 잘못 집지 않도록.
+     * 마지막은 [LAST_INDEX] 로 돌려주고 [atOrdinal] 이 집합 끝으로 푼다; 여기서는 집합
+     * 크기를 모른다.
+     */
+    private fun ordinalIndex(raw: String, squeezed: String): Int? {
+        if (squeezed.contains("마지막")) return LAST_INDEX
+        ORDINAL_DIGIT_REGEX.find(squeezed)?.groupValues?.get(1)?.toIntOrNull()
+            ?.takeIf { it >= 1 }?.let { return it - 1 }
+        ORDINAL_WORDS.forEach { (word, index) ->
+            if (squeezed.contains(word + "번째")) return index
+        }
+        return null
     }
+
+    /** 몇 번째인지 골라 준다. [LAST_INDEX] 는 집합 끝으로 푼다. */
+    private fun <T> List<T>.atOrdinal(index: Int): T? =
+        if (index == LAST_INDEX) lastOrNull() else getOrNull(index)
 
     /**
      * What the turn is, for sentences the rules pass through to the model unchanged.
@@ -864,7 +910,22 @@ object DeterministicTurnRouter {
 
     /** A concrete company/role/department search, distinct from general attribute questions. */
     private fun isExplicitAttributeSearch(raw: String, context: TurnContext? = null): Boolean {
-        if (!ContactReadIntent.hasSearchVerb(raw)) return false
+        // 동사가 없어도, 저장소가 아는 직함을 말했으면 사람을 찾는 말이다.
+        //
+        // "판교개발자" 를 치면 아무 일도 일어나지 않았다 — 찾아·검색 같은 동사가 없어
+        // 명함 검색으로 분류되지 않았고, 정책이 "연락처 검색이 필요한 요청이 아닙니다" 로
+        // 도구를 거부했다(실기기 실측). 명함 앱에서 낱말만 던지는 건 검색이다. 사람들은
+        // 검색창에 "판교개발자" 라고 치지 "판교 개발자 찾아줘" 라고 문장을 쓰지 않는다.
+        //
+        // 아무 말에나 열어 주는 건 아니다 — 아래에서 메일·일정·수정 같은 실행 의도와
+        // 대화 되짚기를 걸러내고, 직함은 손으로 적은 목록이 아니라 카드가 실제로 쓰는 말이다.
+        val namesAKnownTitle = context?.titleMatches?.isNotEmpty() == true
+        // 사람 이름만 던진 것도 마찬가지다 — "손다은" 은 그 사람을 찾아 달라는 말이다.
+        // 이름인지 아닌지는 문장의 철자가 아니라 저장소가 답한다.
+        val namesAKnownPerson = context?.directoryMatches?.any { it.identifiesAPerson } == true
+        if (!ContactReadIntent.hasSearchVerb(raw) && !namesAKnownTitle && !namesAKnownPerson) {
+            return false
+        }
         if (ActionVocabulary.COMPOSE.any(raw::contains) ||
             ActionVocabulary.CALENDAR.any(raw::contains) ||
             CardUpdateIntent.hasUpdateVerb(raw) ||
@@ -884,7 +945,7 @@ object DeterministicTurnRouter {
         // 분류되지 않아 도구가 아예 안 돌거나(정책이 거부), 되짚기가 "대전에"를 이름으로 골라
         // 문장을 "대전에 명함 찾아줘"로 바꿔 변호사를 잃었다(실측). 어느 말이 직함인지는
         // 카드가 안다 — 목록을 늘리는 대신 저장소에 묻는다.
-        if (context?.titleMatches?.isNotEmpty() == true) return true
+        if (namesAKnownTitle || namesAKnownPerson) return true
         return asksForPeople && hasAttribute
     }
 
@@ -1210,7 +1271,19 @@ object DeterministicTurnRouter {
     private val REPLACEMENT_REGEX = Regex("([^,.]{2,20}?)\\s*(?:말고|말구|이 아니라|가 아니라|아니라|아니고)\\s+")
     private val CORRECTION_PREFIX_REGEX = Regex("^\\s*(?:아니|아니요|정정(?:할게요)?|잘못\\s*말했(?:어|어요)?)[,.:;!?\\s]*")
     private val OTHER_CONTACT_REGEX = Regex("다른\\s*(?:사람|분|연락처|명함|후보)")
-    private val ORDINAL_CONTACT_REGEX = Regex("(?:첫|두|세)\\s*번째\\s*(?:사람|분|연락처|명함|후보)")
+    private val ORDINAL_CONTACT_REGEX = Regex(
+        "(?:\\d+|첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열|마지막)\\s*번째?\\s*(?:사람|분|연락처|명함|후보)",
+    )
+    private val ORDINAL_DIGIT_REGEX = Regex("(\\d+)번(?:째)?")
+
+    /** 집합의 끝을 가리키는 표식. 부르는 쪽이 크기를 알고 푼다. */
+    private const val LAST_INDEX = -1
+
+    /** 낱말 서수. 목록에서의 자리가 곧 값이다. */
+    private val ORDINAL_WORDS = listOf(
+        "첫" to 0, "두" to 1, "세" to 2, "네" to 3, "다섯" to 4,
+        "여섯" to 5, "일곱" to 6, "여덟" to 7, "아홉" to 8, "열" to 9,
+    )
     private val CONTACT_VALUE_REGEX = Regex(
         """[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|(?<!\d)0\d{1,2}[- ]?\d{3,4}[- ]?\d{4}(?!\d)""",
     )
