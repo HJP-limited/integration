@@ -27,13 +27,12 @@
 | `:agent-local-gateway` | 모델 없이 도구를 고르는 규칙 게이트웨이 + 공용 시스템 프롬프트·이름 인덱스 | 순수 Kotlin/JVM |
 | `:core-ocr` | OCR 검출·인식·KIE. `OcrPipeline`, `KieParser`, `CardParser`, `OcrCardMapper` | 순수 Kotlin/JVM |
 | `:app` | Android — Compose UI, Room, LiteRT-LM, 각 런타임 배선 | Android |
-| `:desktop` | 노트북 러너 — 같은 커널·도구·검색에 데스크톱 런타임을 물린다 | JVM |
 
 에이전트·도구 계층은 `HJP-limited/HJP_dataset_gen_by_v1@Agent_0910` 에서 가져왔다.
 **충돌하면 그쪽이 정본이다.**
 
-**로직은 위쪽 모듈에서 고친다.** `:app` 이나 `:desktop` 에만 넣으면 두 실행 경로가
-갈라지고, 그게 이 구조가 막으려는 실패다.
+**로직은 위쪽 모듈에서 고친다.** `:app` 에만 넣으면 화면이 규칙을 들고 있게 되고, 그게 이
+구조가 막으려는 실패다 — 검색·라우팅·OCR 규칙은 화면 없이도 시험할 수 있어야 한다.
 
 같은 자바 API 를 안드로이드(aar)와 데스크톱(jar)이 모두 제공하는 점을 이용한다 —
 `:core-ocr` 은 데스크톱 jar 에 `compileOnly` 로 컴파일하고 구현은 소비하는 쪽이 준다.
@@ -67,34 +66,13 @@
 ./gradlew test :app:testDebugUnitTest :tool-android-intents:testDebugUnitTest
 ```
 
-### 노트북 러너
+### 노트북 러너 — 저장소에 없다
 
-실기기 없이 **앱과 같은 커널·도구·검색**을 돌린다.
+실기기 없이 같은 커널·도구·검색을 돌려 보는 JVM 러너를 따로 쓰고 있지만, **저장소에는 올리지
+않는다.** 여기에는 폰에서 도는 것만 둔다.
 
-```bash
-./gradlew :desktop:run --args="ocr <이미지>"          # 명함 한 장 인식
-./gradlew :desktop:run --args="import <이미지>"       # 인식해서 DB 저장 (OCR→검색 연결)
-./gradlew :desktop:run --args="search 판교 개발자"     # 도구가 쓰는 것과 같은 검색 경로
-./gradlew :desktop:run --args="turn 손다은 명함 찾아줘|그 사람 회사 어디야"
-./gradlew :desktop:run --args="turn --yes ...|그 사람 메모를 VIP로 수정해줘"
-```
-
-`--yes` 는 확인이 필요한 도구(명함 수정)를 승인한다. **기본은 거절**이다 — 노트북에는 확인
-화면이 없는데 자동으로 통과시키면 사용자가 못 본 동의를 대신 눌러 주는 셈이고, 러너 결과가
-실제 앱보다 관대해진다.
-
-모델 경계만 앱과 다르다. 러너는 규칙 게이트웨이로 도구를 고른다(앱도 에뮬레이터에서는 같은
-것을 쓴다). 그래서 검증되는 범위는:
-
-- **된다** — 도구 연쇄(`search_contacts` → `get_contact` → …), 라우팅, 세션·지시어 해소,
-  검색 순위(앱과 같은 FTS4 4단 티어 + RRF)
-- **안 된다** — Gemma 가 문장을 어떻게 쓰는지, 캘린더·메일 화면(안드로이드 전용)
-
-실측 한 턴 20~500ms. 첫 실행은 1.2GB ONNX 임베더를 올리느라 ~10초가 더 걸리는데, 그건
-턴 밖에서 미리 한다 — 도구 실행 제한(10초)에 걸려 첫 턴이 내용과 무관하게 실패했었다.
-
-저장소는 `build/hjp-desktop.db`(SQLite), 시드는 앱과 **같은 파일**(`app/src/main/assets/cards/
-cards_seed.json`, 1000장)을 읽는다. 임베더 위치는 `HJP_EMBED_MODEL_DIR` 로 준다.
+`desktop/` 폴더가 로컬에 있으면 `settings.gradle.kts` 가 그때만 `:desktop` 을 빌드에 끼운다.
+없으면 조용히 건너뛰므로, 새로 clone 해도 빌드가 깨지지 않는다.
 
 ## 검색 구조
 
@@ -113,7 +91,7 @@ cards_seed.json`, 1000장)을 읽는다. 임베더 위치는 `HJP_EMBED_MODEL_DI
 필드 제약은 `:search-core` 한 곳에 있다. 티어를 고칠 때는 두 곳을 같이 고쳐야 한다 —
 한쪽만 늘리면 같은 질의가 양쪽에서 달라진다.
 
-`:desktop` 은 raw SQLite(JDBC)를 쓰지만 **같은 SQL·같은 FTS4 설정**을 만든다. 폰이 FTS4 를
+노트북 러너는 raw SQLite(JDBC)를 쓰지만 **같은 SQL·같은 FTS4 설정**을 만든다. 폰이 FTS4 를
 쓰니 노트북도 FTS4 를 쓴다 — 토크나이저가 다르면 같은 질의가 양쪽에서 다른 결과를 내고,
 그 순간 노트북 지표는 앱을 대변하지 못한다. 바꾼다면 **양쪽을 같이** 바꿔야 한다.
 
@@ -135,13 +113,13 @@ KIE 분류기가 없으면 `CardParser` 정규식 폴백으로 내려간다(라�
 ### 노트북 임베딩
 
 안드로이드는 EmbeddingGemma 를 `.tflite` + AI Edge RAG SDK 로 돌리는데 그 SDK 네이티브가
-**arm64 전용**이라 x86_64(노트북·에뮬레이터)에서는 못 쓴다. 그래서 `:desktop` 만 ONNX
+**arm64 전용**이라 x86_64(노트북·에뮬레이터)에서는 못 쓴다. 그래서 노트북 쪽만 ONNX
 런타임을 쓴다 — 모델과 전처리는 같다.
 
 정합 실측: 앱에 번들된 사전 계산 벡터와 **코사인 1.0000**. 결정적이었던 두 가지 —
 태스크 프리픽스(`"task: search result | query: "` / `"title: none | text: "`)를 직접 붙여야
 하고(안드로이드는 SDK 가 자동으로 붙인다), 토크나이저는 `tokenizer.json` 을 그대로 읽는
-구현을 써야 한다. 자세한 건 `desktop/.../OnnxEmbeddingProvider.kt` 주석에 있다.
+구현을 써야 한다(저장소 밖, 로컬 러너에 있다).
 
 ## 알려진 한계
 
@@ -171,5 +149,5 @@ KIE 분류기가 없으면 `CardParser` 정규식 폴백으로 내려간다(라�
 - `docs/검색_구조_설명.md`, `docs/멀티턴_인수인계.md` — 검색·멀티턴 설계 배경
 - `docs/성능지표.md` — 평가 지표
 - `scripts/eval_multiturn.py`, `scripts/hybrid_server.py` — 파이썬 미러. **Kotlin 이 정본이다.**
-  `:desktop` 러너가 같은 Kotlin 코드를 노트북에서 돌리므로 새 작업은 그쪽을 쓴다.
+  노트북 러너가 같은 Kotlin 코드를 돌리므로 새 작업은 그쪽을 쓴다(저장소 밖).
   파이썬 쪽은 130시나리오/377턴 평가 자산 때문에 남겨 둔 것이다.
