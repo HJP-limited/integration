@@ -44,6 +44,16 @@ object DeterministicTurnRouter {
     private val cardObjectMarkers = ContactReadIntent.CARD_OBJECTS
     private val searchVerbMarkers = ContactReadIntent.SEARCH_VERBS
     private val pronounMarkers = ContactAnaphora.MARKERS
+    /**
+     * 장소를 가리키는 말. search-core 의 SearchFieldConstraintResolver 가 쓰는 것과 같은 목록이다 —
+     * 거기 것은 그 모듈 안에 갇혀 있고 이 라우터는 순수해야 해서 여기 한 벌을 둔다.
+     * **바꿀 때는 양쪽을 같이** 고쳐야 한다.
+     */
+    private val locationRoleMarkers =
+        listOf("에서", "에 있는", "에있는", "근무", "일하는", "계신", "소재", "지사", "근처")
+
+    private fun namesAPlaceRole(raw: String): Boolean = locationRoleMarkers.any(raw::contains)
+
     private val referenceSearchMarkers = listOf("방금 찾은", "아까 찾은", "앞서 찾은", "이전에 찾은", "방금 검색한")
 
     /**
@@ -823,7 +833,7 @@ object DeterministicTurnRouter {
         // Attribute/company searches have no person-name span for the directory matcher to ground
         // (for example "(주) 다이나믹스튜디오 사람 찾아줘").  They are still explicit contact-store
         // searches: seed the typed search obligation so a valid model search is not rejected later.
-        isExplicitAttributeSearch(raw) -> DialogueAct.CONTACT_SEARCH
+        isExplicitAttributeSearch(raw, context) -> DialogueAct.CONTACT_SEARCH
         // Asking what a named person's card says is a lookup, whatever field it asks for.
         //
         // This has to be decided before the action vocabularies, because the field names and the
@@ -853,7 +863,7 @@ object DeterministicTurnRouter {
     }
 
     /** A concrete company/role/department search, distinct from general attribute questions. */
-    private fun isExplicitAttributeSearch(raw: String): Boolean {
+    private fun isExplicitAttributeSearch(raw: String, context: TurnContext? = null): Boolean {
         if (!ContactReadIntent.hasSearchVerb(raw)) return false
         if (ActionVocabulary.COMPOSE.any(raw::contains) ||
             ActionVocabulary.CALENDAR.any(raw::contains) ||
@@ -867,6 +877,14 @@ object DeterministicTurnRouter {
             "대표", "이사", "부장", "과장", "차장", "대리", "사원", "매니저", "디자이너", "엔지니어",
             "designer", "manager", "engineer", "developer", "director", "lead", "head", "chief", "officer",
         ).any(raw.lowercase()::contains)
+        // 저장소가 직함이라고 답한 말이 문장에 있으면 그것만으로 속성 검색이다.
+        //
+        // 위 두 조건은 "사람/직원/담당자/분" 중 하나와, 손으로 적은 직함 목록을 **둘 다**
+        // 요구한다. 그래서 "대전에 있는 변호사 찾아줘" 가 여기서 걸러지지 않았고, 명함 검색으로
+        // 분류되지 않아 도구가 아예 안 돌거나(정책이 거부), 되짚기가 "대전에"를 이름으로 골라
+        // 문장을 "대전에 명함 찾아줘"로 바꿔 변호사를 잃었다(실측). 어느 말이 직함인지는
+        // 카드가 안다 — 목록을 늘리는 대신 저장소에 묻는다.
+        if (context?.titleMatches?.isNotEmpty() == true) return true
         return asksForPeople && hasAttribute
     }
 
@@ -969,7 +987,19 @@ object DeterministicTurnRouter {
                 // Do not reinterpret its first short Hangul span as a person's name (e.g. "주식");
                 // preserve the user's attribute query for the model/search executor. Generic name
                 // searches continue through the existing name-shaped fallback below.
-                if (isExplicitAttributeSearch(raw)) {
+                if (isExplicitAttributeSearch(raw, context)) {
+                    return TurnRoutePlan.Continue(raw)
+                }
+                // 장소를 가리키는 말이 있으면 이름 찾기로 바꾸지 않는다.
+                //
+                // 아래 되짚기는 "이름 같아 보이는 첫 덩어리"를 골라 "<그것> 명함 찾아줘" 로
+                // 문장을 다시 쓴다. "대전에 있는 변호사 찾아줘" 에서는 그 덩어리가 "대전에" 라
+                // 문장이 "대전에 명함 찾아줘" 가 되고, **변호사가 통째로 사라진다**
+                // (실측: 대전 사람 아무나 다섯이 나왔다. 직접 검색하면 탁예린·방우성이 맞게 나온다).
+                // isExplicitAttributeSearch 가 막게 돼 있었지만 "사람/직원/담당자/분" 중 하나를
+                // 요구하고 직함 목록도 손으로 적은 것이라 변호사·개발자가 빠져 있다. 장소 역할
+                // 표현은 이 라우터가 이미 아는 신호이므로 그걸로 가른다.
+                if (namesAPlaceRole(raw)) {
                     return TurnRoutePlan.Continue(raw)
                 }
                 val candidate = ContactNameCandidates.candidates(raw)

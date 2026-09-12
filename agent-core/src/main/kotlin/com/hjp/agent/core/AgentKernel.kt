@@ -153,9 +153,14 @@ class AgentKernel(
             // before routing, and handed to the router as typed state: whether 하도 is a person or a
             // province is a question only the store can answer, and the router must stay pure.
             val directoryMatches = resolveDirectory(normalized)
+            // 어느 말이 직함인지도 저장소가 답한다. 손으로 적은 목록에는 변호사·개발자처럼
+            // 흔한 직함이 빠져 있어서, 그런 문장이 명함 검색으로 분류되지 않았다.
+            val titleMatches = runCatching { contactDirectory.titlesIn(normalized) }
+                .getOrDefault(emptyList())
             fun turnContext(text: String = normalized, groundedCardId: String? = null) =
                 session.turnContext(
                     text, snapshot.contractsByModelName.keys, groundedCardId, directoryMatches,
+                    titleMatches,
                 )
 
             // Classified before the turn is recorded, by the same router that routes it, so the

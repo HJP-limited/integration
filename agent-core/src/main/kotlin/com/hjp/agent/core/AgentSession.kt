@@ -40,6 +40,7 @@ data class AgentSession(
         availableTools: Set<String>,
         groundedCardId: String? = null,
         directoryMatches: List<com.hjp.agent.contract.DirectoryNameMatch> = emptyList(),
+        titleMatches: List<String> = emptyList(),
     ) = TurnContext(
         userText = userText,
         memory = conversationMemory,
@@ -47,6 +48,7 @@ data class AgentSession(
         availableTools = availableTools,
         groundedCardId = groundedCardId,
         directoryMatches = directoryMatches,
+        titleMatches = titleMatches,
     )
 }
 

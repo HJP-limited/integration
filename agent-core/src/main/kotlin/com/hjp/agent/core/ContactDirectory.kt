@@ -141,6 +141,19 @@ fun interface ContactDirectory {
      */
     suspend fun resolve(candidates: List<ContactNameCandidates.Candidate>): List<DirectoryNameMatch>
 
+    /**
+     * 이 문장 안에서 **카드가 실제로 직함으로 쓰는** 낱말들.
+     *
+     * 손으로 적은 직함 목록으로는 안 된다. 변호사·개발자·연구원처럼 흔한 직함이 빠져 있으면
+     * "대전에 있는 변호사 찾아줘" 가 명함 검색으로 분류되지 않아 아무 도구도 안 돌고,
+     * 되짚기가 "대전에"를 이름으로 골라 문장을 "대전에 명함 찾아줘"로 바꿔 **변호사가
+     * 통째로 사라진다**(실측). 어느 말이 직함인지는 저장소만 안다.
+     *
+     * 저장소에 닿지 못하면 빈 목록. 조회가 안 되는 것은 보통 규칙으로 돌아갈 이유이지
+     * 턴을 실패시킬 이유가 아니다.
+     */
+    suspend fun titlesIn(text: String): List<String> = emptyList()
+
     companion object {
         /** The default for every caller without a store. It never claims a sentence names anybody. */
         val None: ContactDirectory = ContactDirectory { emptyList() }

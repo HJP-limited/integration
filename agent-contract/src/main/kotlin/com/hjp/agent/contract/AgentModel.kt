@@ -169,6 +169,11 @@ data class TurnContext(
      * treats as "this sentence names nobody I know".
      */
     val directoryMatches: List<DirectoryNameMatch> = emptyList(),
+    /**
+     * 이 문장 안에서 카드가 직함으로 쓰는 낱말들. 사람 이름과 같은 방식으로, 문장의 철자가
+     * 아니라 **저장소**가 답한다. 비어 있으면 "이 문장은 내가 아는 직함을 말하지 않는다".
+     */
+    val titleMatches: List<String> = emptyList(),
 )
 
 sealed interface ModelInput {

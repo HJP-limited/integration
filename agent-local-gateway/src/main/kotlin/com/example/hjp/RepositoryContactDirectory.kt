@@ -34,6 +34,11 @@ class RepositoryContactDirectory(
         val byName: Map<String, Entry>,
         /** Every company, job title, department and industry, squeezed. Not people. */
         val nonPersonVocabulary: Set<String>,
+        /**
+         * 직함 칸에 실제로 나오는 낱말들. 직함 전체("시니어 변호사")와 그 낱말("변호사")을
+         * 모두 담는다 — 사람은 둘 중 아무 쪽으로나 묻는다.
+         */
+        val titleWords: Set<String>,
     )
 
     private data class Entry(val storedName: String, val cardIds: List<String>)
@@ -93,6 +98,7 @@ class RepositoryContactDirectory(
     private fun build(cards: List<BusinessCardRecord>): Index {
         val byName = LinkedHashMap<String, Entry>()
         val nonPerson = LinkedHashSet<String>()
+        val titles = LinkedHashSet<String>()
         cards.forEach { card ->
             addName(byName, card.name, card.id)
             // A Latin-script name is held in its own column and is just as much this person's name.
@@ -101,8 +107,24 @@ class RepositoryContactDirectory(
                 .map { it.squeeze() }
                 .filter(String::isNotEmpty)
                 .forEach(nonPerson::add)
+            card.title.trim().lowercase().let { title ->
+                if (title.isNotEmpty()) titles += title
+                title.split(Regex("\\s+")).forEach { word ->
+                    if (word.length >= 2) titles += word
+                }
+            }
         }
-        return Index(byName, nonPerson)
+        return Index(byName, nonPerson, titles)
+    }
+
+    override suspend fun titlesIn(text: String): List<String> {
+        val index = index() ?: return emptyList()
+        val haystack = text.lowercase()
+        // 긴 것부터 — "시니어 변호사"가 걸리면 "변호사"는 굳이 또 담지 않는다.
+        return index.titleWords
+            .filter { it in haystack }
+            .sortedByDescending { it.length }
+            .distinct()
     }
 
     private fun addName(into: MutableMap<String, Entry>, name: String, cardId: String) {
