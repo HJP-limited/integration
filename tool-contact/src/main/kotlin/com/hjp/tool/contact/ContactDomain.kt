@@ -87,4 +87,13 @@ interface ContactSearchBackend {
     suspend fun get(cardId: String): BusinessCardRecord?
     fun engineName(): String
     fun configurationAvailable(): Boolean
+
+    /**
+     * 조건에 맞는 명함이 **모두 몇 장인지**. 검색이 아니라 세기다 — top-N 으로 세면
+     * "판교에 몇 명 있어?"가 언제나 5가 된다.
+     *
+     * 질의가 비면 전체 개수. 조건을 읽지 못하면(개념형) null — 부르는 쪽이 보통의 검색으로
+     * 가야 한다는 뜻이다. 셀 줄 모르는 백엔드도 null 을 돌려주면 된다.
+     */
+    suspend fun countMatching(query: String): Int? = null
 }

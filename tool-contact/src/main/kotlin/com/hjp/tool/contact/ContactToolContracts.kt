@@ -121,6 +121,16 @@ internal val UPDATE_OUTPUT_SCHEMA = objectSchema(listOf("before", "after"), buil
     putCardObject("after")
 })
 
+internal val COUNT_INPUT_SCHEMA = objectSchema(emptyList(), buildJsonObject {
+    put("query", stringProperty("셀 조건. 비우면 전체 개수. 예: '판교', '이사 직급'"))
+})
+
+internal val COUNT_OUTPUT_SCHEMA = objectSchema(listOf("count", "countable"), buildJsonObject {
+    putJsonObject("count") { put("type", "integer") }
+    putJsonObject("countable") { put("type", "boolean") }
+    put("query", stringProperty("실제로 센 조건"))
+})
+
 object ContactToolContracts {
     val Search = ToolContract(
         capabilityId = ToolCapabilityId("contact.search"),
@@ -135,6 +145,24 @@ object ContactToolContracts {
         outputPii = PiiLevel.BASIC_CONTACT,
         defaultTimeoutMillis = 5_000,
         presentation = ToolPresentation("명함을 검색하고 있어요.", "명함 검색을 완료했어요.", "명함 검색을 사용할 수 없어요."),
+    )
+
+    val Count = ToolContract(
+        capabilityId = ToolCapabilityId("contact.count"),
+        modelName = "count_contacts",
+        version = ContractVersion(1, 0),
+        description = "조건에 맞는 명함이 **모두 몇 장인지** 셉니다. 개수를 묻는 질문에는 " +
+            "search_contacts 대신 이걸 쓰세요 — 검색은 상위 몇 장만 돌려주므로 그 수를 전체로 " +
+            "착각해 답하게 됩니다. 조건을 비우면 등록된 전체 개수입니다.",
+        inputSchema = COUNT_INPUT_SCHEMA,
+        outputSchema = COUNT_OUTPUT_SCHEMA,
+        effect = ToolEffect.READ_ONLY,
+        confirmationPolicy = ConfirmationPolicy.NONE,
+        inputPii = PiiLevel.NONE,
+        // 개수는 사람을 지목하지 않는다 — 이름도 연락처도 나가지 않는다.
+        outputPii = PiiLevel.NONE,
+        defaultTimeoutMillis = 5_000,
+        presentation = ToolPresentation("명함 개수를 세고 있어요.", "명함 개수를 확인했어요.", "명함 개수를 셀 수 없어요."),
     )
 
     val Get = ToolContract(

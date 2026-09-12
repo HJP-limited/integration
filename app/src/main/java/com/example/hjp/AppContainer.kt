@@ -38,6 +38,7 @@ import com.hjp.tool.android.OpenComposePlugin
 import com.hjp.tool.contact.UpdateBusinessCardPlugin
 import com.hjp.tool.contact.GetContactPlugin
 import com.hjp.tool.contact.RyeongContactSearchBackend
+import com.hjp.tool.contact.CountContactsPlugin
 import com.hjp.tool.contact.SearchContactsPlugin
 import com.hjp.tool.contract.ConfirmationGateway
 import com.hjp.tool.contract.PermissionGateway
@@ -116,6 +117,7 @@ class AppContainer(context: Context) : AutoCloseable {
     private val contactDirectory = RepositoryContactDirectory(contactRepository)
     private val plugins = listOf(
         SearchContactsPlugin(contactBackend),
+        CountContactsPlugin(contactBackend),
         GetContactPlugin(contactBackend),
         UpdateBusinessCardPlugin(
             contactRepository,

@@ -51,6 +51,27 @@ final class SearchFieldConstraintMatcher {
     }
 
     /**
+     * Does this card satisfy the query when the question is "how many?"
+     *
+     * Same fields, one difference: a job is a requirement here, not an ordering hint. Ranking can
+     * afford to keep a 고문변호사 near a question about 변호사 — the person asking gets to judge.
+     * A count cannot: "이사 직급 몇 명이야" answered with everybody is not a loose answer, it is a
+     * wrong number stated with confidence.
+     */
+    static boolean matchesForCount(BusinessCard card, SearchFieldConstraintPlan plan) {
+        if (card == null) return false;
+        if (plan == null || plan.constrainsNothing()) return false;
+        if (!matches(card, plan)) return false;
+        if (plan.titles.isEmpty() || plan.isStrict()) return true;
+        // Word by word, exactly as the strict path does: 이사 must not match 대표이사.
+        List<String> titleWords = titleWords(card);
+        for (String title : plan.titles) {
+            if (titleWords.contains(title)) return true;
+        }
+        return false;
+    }
+
+    /**
      * The candidates that survive the plan.
      *
      * When the plan already knows the answer is nobody — a place was named and this address book

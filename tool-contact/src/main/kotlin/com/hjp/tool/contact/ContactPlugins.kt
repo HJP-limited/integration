@@ -43,10 +43,29 @@ data class SearchContactsOutput(
     val fallbackUsed: Boolean,
     val engine: String,
 )
+data class CountContactsInput(val query: String)
+data class CountContactsOutput(val count: Int, val countable: Boolean, val query: String)
 data class GetContactInput(val cardId: String, val purpose: String)
 data class GetContactOutput(val card: BusinessCardRecord)
 data class UpdateBusinessCardInput(val cardId: String, val updates: Map<String, String>, val clearFields: Set<String>)
 data class UpdateBusinessCardOutput(val before: BusinessCardRecord, val after: BusinessCardRecord)
+
+private object CountInputCodec : ToolInputCodec<CountContactsInput> {
+    override val schema = COUNT_INPUT_SCHEMA
+    override fun decode(arguments: JsonObject): DecodeResult<CountContactsInput> =
+        DecodeResult.Success(
+            CountContactsInput((arguments["query"] as? JsonPrimitive)?.content?.trim().orEmpty()),
+        )
+}
+
+private object CountOutputCodec : ToolOutputCodec<CountContactsOutput> {
+    override val schema = COUNT_OUTPUT_SCHEMA
+    override fun encode(value: CountContactsOutput): JsonObject = buildJsonObject {
+        put("count", value.count)
+        put("countable", value.countable)
+        put("query", value.query)
+    }
+}
 
 private object SearchInputCodec : ToolInputCodec<SearchContactsInput> {
     override val schema = SEARCH_INPUT_SCHEMA
@@ -141,6 +160,35 @@ private object UpdateOutputCodec : ToolOutputCodec<UpdateBusinessCardOutput> {
     override fun encode(value: UpdateBusinessCardOutput) = buildJsonObject {
         put("before", value.before.toJson())
         put("after", value.after.toJson())
+    }
+}
+
+/**
+ * 조건에 맞는 명함이 모두 몇 장인지 센다.
+ *
+ * 개수 질문을 검색으로 처리하면 상위 몇 장만 보고 그 수를 답하게 된다 — 실측으로 실제 42명인
+ * 질문에 5명이라고 답했다. 순위가 아니라 조건 일치를 전부 세는 경로가 따로 있어야 하는 이유다.
+ *
+ * 셀 수 없는 조건(개념형 "AI 잘하는 사람 몇 명이야")이면 countable=false 로 돌려준다.
+ * 숫자를 지어내는 것보다 못 센다고 말하는 편이 낫고, 모델은 그때 보통의 검색으로 간다.
+ */
+class CountContactsPlugin(private val backend: ContactSearchBackend) :
+    TypedToolPlugin<CountContactsInput, CountContactsOutput>(
+        ToolImplementationId("hjp.contact.count.v1"), ContactToolContracts.Count,
+        CountInputCodec, CountOutputCodec,
+    ) {
+    override suspend fun availability() = if (backend.configurationAvailable()) ToolAvailability.Ready
+        else ToolAvailability.Unavailable("contact.backend_initialization_failed")
+
+    override suspend fun executeTyped(
+        input: CountContactsInput,
+        request: ToolRequest,
+        context: ToolExecutionContext,
+    ): TypedToolResult<CountContactsOutput> {
+        val counted = backend.countMatching(input.query)
+        return TypedToolResult.Success(
+            CountContactsOutput(counted ?: 0, counted != null, input.query),
+        )
     }
 }
 

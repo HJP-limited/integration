@@ -92,6 +92,7 @@ private class LocalToolRoutingModelSession(
         } else when (result.modelToolName) {
         SEARCH_CONTACTS -> continueAfterSearch(result)
         GET_CONTACT -> continueAfterGetContact(result)
+            COUNT_CONTACTS -> continueAfterCount(result)
         GET_CURRENT_DATETIME -> continueAfterCurrentDateTime(result)
         CREATE_CALENDAR_EVENT -> finishExternalUi(result, "캘린더 작성 화면을 열었습니다. 저장 전에 확인해 주세요.")
         OPEN_COMPOSE -> finishExternalUi(result, composeSuccessMessage())
@@ -136,6 +137,10 @@ private class LocalToolRoutingModelSession(
                 if (grounded != null && hasTool(GET_CONTACT)) getContactToolCall(grounded, "display")
                 else if (!hasTool(SEARCH_CONTACTS)) unavailable("명함 검색")
                 else searchToolCall(action.query)
+            }
+            is PendingAction.ContactCount -> {
+                if (!hasTool(COUNT_CONTACTS)) unavailable("명함 개수 세기")
+                else countToolCall(action.condition)
             }
             is PendingAction.CurrentDateTime -> {
                 if (!hasTool(GET_CURRENT_DATETIME)) unavailable("현재 날짜·시각 조회")
@@ -337,6 +342,34 @@ private class LocalToolRoutingModelSession(
         }
     }
 
+    /** 전체 개수는 조건을 **보내지 않는다.** 빈 문자열은 인자 검증에 걸린다. */
+    private fun countToolCall(condition: String) = toolCall(COUNT_CONTACTS) {
+        if (condition.isNotBlank()) put("query", condition)
+    }
+
+    private fun continueAfterCount(result: ModelToolResponse): ModelDecision {
+        pendingAction = null
+        if (!result.ok()) {
+            return ModelDecision.FinalCandidate(result.errorMessage("명함 개수를 세지 못했습니다."))
+        }
+        val data = result.payload["data"] as? JsonObject
+            ?: return ModelDecision.Invalid("명함 개수 결과 형식이 올바르지 않습니다.", retryable = false)
+        val countable = (data["countable"] as? JsonPrimitive)?.booleanOrNull ?: false
+        val count = (data["count"] as? JsonPrimitive)?.intOrNull ?: 0
+        val condition = (data["query"] as? JsonPrimitive)?.content.orEmpty()
+        // 셀 수 없는 조건이면 숫자를 말하지 않는다. 지어낸 확신보다 못 센다고 말하는 편이 낫다.
+        if (!countable) {
+            return ModelDecision.FinalCandidate(
+                "그 조건은 사람마다 기준이 달라 정확한 수를 세기 어렵습니다. " +
+                    "이름·회사·지역·직함으로 물어보시면 세어 드릴 수 있어요.",
+            )
+        }
+        return ModelDecision.FinalCandidate(
+            if (condition.isBlank()) "등록된 명함은 총 " + count + "장입니다."
+            else "조건에 맞는 명함은 총 " + count + "장입니다.",
+        )
+    }
+
     private fun continueAfterCurrentDateTime(result: ModelToolResponse): ModelDecision {
         val action = pendingAction
         if (!result.ok()) {
@@ -510,6 +543,9 @@ private sealed interface PendingAction {
 
     data class ContactSearch(val query: String) : PendingAction
 
+    /** 개수 질문. [condition] 이 비면 전체 개수다. */
+    data class ContactCount(val condition: String) : PendingAction
+
     data class CurrentDateTime(val timezone: String?) : PendingAction
 
     data class Calendar(
@@ -588,7 +624,57 @@ private object LocalPromptRouter {
         UpdatePromptParser.parse(prompt)?.let { return it }
         ComposePromptParser.parse(prompt)?.let { return it }
         CalendarPromptParser.parse(prompt)?.let { return it }
+        // 개수 질문은 검색보다 **먼저** 본다. 검색으로 가면 상위 몇 장만 보고 그 수를 전체라고
+        // 답한다(실측: 실제 42명인 질문에 5명).
+        CountPromptParser.parse(prompt)?.let { return it }
         return ContactSearchPromptParser.parse(prompt)?.let { PendingAction.ContactSearch(it) }
+    }
+}
+
+/**
+ * 개수를 묻는 말인지, 그리고 조건이 붙었는지 가른다.
+ *
+ * 검색으로 보내면 안 되는 이유가 측정으로 남아 있다: 검색은 상위 몇 장만 채우므로 그 수를
+ * 전체로 착각해 답한다(실기기 실측 — 실제 1000장인데 "총 5명", 실제 42명인데 "5명").
+ *
+ * 판정은 **일반 낱말을 다 걷어내고 남는 것이 있는지**로 한다. 예전에는 "전체/모두/전부/총"
+ * 같은 신호가 있어야 통과시켰는데, 사람들이 가장 자연스럽게 쓰는 표현이 그 신호를 안 쓴다 —
+ * "내가 가진 명함 개수 몇개야?", "명함 몇 개 있어?" 가 전부 검색으로 빠졌다. 조건이 있으면
+ * ("판교에 몇 명") 그 말이 안 걷히고 남으므로 같은 규칙이 조건 유무까지 함께 가른다.
+ */
+private object CountPromptParser {
+    private val countIntent = Regex("몇|목록|리스트|다 보여|얼마나|개수|장수|전체|전부|모두")
+    private val filteredCountSignal = Regex("몇\\s*(명|장|개)")
+
+    /** 긴 것부터 — "내가 가진"이 "내"보다 먼저 걷혀야 한다. */
+    private val genericWords = listOf(
+        "가지고 있어", "가지고 있는", "가지고있는", "내가 가진", "가진", "가지고",
+        "지금", "현재",
+        "저장된", "등록된", "있는", "있어", "있나", "있지",
+        "보여줘", "알려줘", "찾아줘", "리스트", "목록", "전체", "명함", "이름",
+        "카드", "사람", "모두", "전부", "얼마나", "몇", "장수", "개수", "장", "명", "총", "개",
+        "내", "제", "다", "이", "야", "어", "지", "나",
+        "은", "는", "이야", "인가", "될까",
+        "?", "!", ".", ",", " ",
+    )
+
+    fun parse(prompt: String): PendingAction.ContactCount? {
+        if (!countIntent.containsMatchIn(prompt)) return null
+        // 아무것도 안 남으면 조건 없는 전체 질문이다.
+        if (strip(prompt).isEmpty()) return PendingAction.ContactCount("")
+        // 남은 게 있으면 조건이 붙은 질문이고, 그때는 "몇 명/장/개" 라는 분명한 신호를 요구한다.
+        // 목록 요청("판교 사람 보여줘")까지 개수로 답하면 물어본 것과 다른 답이 된다.
+        if (!filteredCountSignal.containsMatchIn(prompt)) return null
+        // **걷어낸 찌꺼기가 아니라 원문을 넘긴다.** 걷어내기는 조건이 있는지 가르는 용도일 뿐이고,
+        // 그 결과를 조건으로 쓰면 낱말이 부서진다("이사 직급" -> "사직급", "판교에" -> "판교에").
+        // 조건을 읽는 일은 검색이 쓰는 것과 같은 기계(SearchFieldConstraintResolver)가 한다.
+        return PendingAction.ContactCount(prompt)
+    }
+
+    private fun strip(prompt: String): String {
+        var stripped = prompt
+        for (word in genericWords) stripped = stripped.replace(word, "")
+        return stripped.trim()
     }
 }
 
@@ -967,6 +1053,7 @@ private fun stripRecipientPrefix(value: String): String =
 
 private const val SEARCH_CONTACTS = "search_contacts"
 private const val GET_CONTACT = "get_contact"
+private const val COUNT_CONTACTS = "count_contacts"
 private const val GET_CURRENT_DATETIME = "get_current_datetime"
 private const val CREATE_CALENDAR_EVENT = "create_calendar_event"
 private const val OPEN_COMPOSE = "open_compose"

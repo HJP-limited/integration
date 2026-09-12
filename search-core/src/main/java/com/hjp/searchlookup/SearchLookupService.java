@@ -142,6 +142,33 @@ public final class SearchLookupService implements RetrievalService {
         return digits >= 4;
     }
 
+    /**
+     * 조건에 맞는 명함이 **모두 몇 장인지**. 검색이 아니라 세기다.
+     *
+     * 검색을 태워서 세면 안 된다. 검색은 top-N 까지만 후보를 채우므로 "판교에 몇 명 있어?"에
+     * 5라고 답하게 된다(실측: 실제 42명인데 5명이라고 답함). 그래서 순위와 무관하게 조건을
+     * 모든 카드에 대 본다 — 조건을 읽는 기계는 검색이 쓰는 것과 같은 것이다.
+     *
+     * @return 조건을 하나도 못 읽었으면 {@link #COUNT_NOT_COUNTABLE}. 개념형 질의("AI 잘하는
+     *     사람 몇 명이야")가 여기 해당하고, 그때는 부르는 쪽이 보통의 검색 경로로 가야 한다 —
+     *     사람마다 답이 다른 질문을 숫자 하나로 답하면 틀린 확신을 준다.
+     */
+    public int countMatching(String rawQuery) {
+        List<BusinessCard> all = repository.getAllCards();
+        if (rawQuery == null || rawQuery.trim().isEmpty()) return all.size();
+        SearchFieldConstraintPlan plan = fieldConstraints.resolve(queryAnalyzer.analyze(rawQuery));
+        if (plan.abstains()) return 0;
+        if (plan.constrainsNothing()) return COUNT_NOT_COUNTABLE;
+        int matched = 0;
+        for (BusinessCard card : all) {
+            if (SearchFieldConstraintMatcher.matchesForCount(card, plan)) matched++;
+        }
+        return matched;
+    }
+
+    /** 조건을 읽지 못해 셀 수 없다는 뜻. 음수라 개수와 혼동되지 않는다. */
+    public static final int COUNT_NOT_COUNTABLE = -1;
+
     /** The field constraints a query resolves to. Package-private: for tests in this package. */
     SearchFieldConstraintPlan fieldConstraintPlan(String rawQuery){ return fieldConstraints.resolve(queryAnalyzer.analyze(rawQuery)); }
     @Override public BusinessCard getCard(String cardId){ return repository.getCard(cardId==null?null:cardId.trim()); }

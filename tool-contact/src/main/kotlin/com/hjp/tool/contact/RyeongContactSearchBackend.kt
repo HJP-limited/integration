@@ -96,6 +96,11 @@ class RyeongContactSearchBackend(
         )
     }
 
+    override suspend fun countMatching(query: String): Int? = withContext(Dispatchers.Default) {
+        val counted = requireService().countMatching(query)
+        if (counted == SearchLookupService.COUNT_NOT_COUNTABLE) null else counted
+    }
+
     override suspend fun get(cardId: String): BusinessCardRecord? = withContext(Dispatchers.Default) {
         val indexedCard = requireService().getCard(cardId) ?: return@withContext null
         repository.getById(indexedCard.id)

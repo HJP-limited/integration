@@ -33,6 +33,7 @@ import com.hjp.tool.contact.ContactSearchHit
 import com.hjp.tool.contact.ContactSearchResponse
 import com.hjp.tool.contact.GetContactPlugin
 import com.hjp.tool.contact.MutableBusinessCardRepository
+import com.hjp.tool.contact.CountContactsPlugin
 import com.hjp.tool.contact.SearchContactsPlugin
 import com.hjp.tool.contact.UpdateBusinessCardPlugin
 import com.hjp.tool.contract.ToolExecutionContext
@@ -114,6 +115,7 @@ class MultiturnScenarioHarness(
 
     private val plugins = listOf(
         SearchContactsPlugin(backend),
+        CountContactsPlugin(backend),
         GetContactPlugin(backend),
         UpdateBusinessCardPlugin(repository),
         CreateCalendarEventPlugin(calendar),

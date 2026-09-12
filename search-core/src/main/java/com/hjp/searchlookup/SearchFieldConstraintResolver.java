@@ -217,6 +217,13 @@ final class SearchFieldConstraintResolver {
         // 이름·회사·직함·부서로 이미 쓰이는 말은 지역으로 읽지 않는다.
         if (vocabulary.nonLocationTerms.contains(token)) return false;
 
+        // 카드의 주소 안에 그 말이 들어 있으면 지명이다. 어휘집은 주소를 띄어쓰기로 쪼갠 뒤
+        // 접미사를 **한 겹만** 떼므로 "판교역로"에서 "판교역"까지만 만들어지고 "판교"는 없다.
+        // 사람들은 판교라고 부른다 — 어휘집 주석이 판교·강남을 예로 들며 "카드가 그렇게 쓰니까
+        // 지명"이라고 적어 둔 그 경우다. 이름·회사·직함으로 쓰이는 말은 바로 위에서 이미
+        // 걸러졌으므로, 여기까지 온 두 글자 이상은 주소에 있으면 지명으로 본다.
+        if (token.length() >= 2 && vocabulary.someoneWorksIn(token)) return true;
+
         for (String suffix : SHORT_SUFFIXES) {
             if (token.length() >= 3 && token.endsWith(suffix)
                     && token.length() - suffix.length() >= 2) {

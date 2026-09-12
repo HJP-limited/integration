@@ -31,6 +31,7 @@ import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.ContactSearchBackend
 import com.hjp.tool.contact.GetContactPlugin
 import com.hjp.tool.contact.RyeongContactSearchBackend
+import com.hjp.tool.contact.CountContactsPlugin
 import com.hjp.tool.contact.SearchContactsPlugin
 import com.hjp.tool.contact.UpdateBusinessCardPlugin
 import com.hjp.tool.contract.ConfirmationGateway
@@ -148,6 +149,7 @@ private class DesktopAgent(
 
     private val plugins = listOf(
         SearchContactsPlugin(backend),
+        CountContactsPlugin(backend),
         GetContactPlugin(backend),
         UpdateBusinessCardPlugin(repository, onUpdated = { directory.invalidate() }),
         GetCurrentDateTimePlugin(),
