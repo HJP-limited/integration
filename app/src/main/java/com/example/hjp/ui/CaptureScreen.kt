@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import com.hjp.tool.contact.BusinessCardRecord
+import com.example.hjp.DebugImage
 import com.example.hjp.ocr.AndroidOcr
 import com.example.hjp.ocr.CardParser
 import com.example.hjp.ocr.OcrPipeline
@@ -121,6 +122,27 @@ fun CaptureScreen(
                     )
                 )
             }.onFailure { error = it.message ?: it.javaClass.simpleName }
+        }
+    }
+
+    // 디버그 인텐트로 들어온 이미지를 태운다. 갤러리로 고른 것과 **같은 경로**다 —
+    // decodeBitmap 이 EXIF 를 보고 세운 뒤 인식으로 넘어간다.
+    // 키에 pending 을 넣는다 — 이게 없으면 이미 떠 있는 화면에 새 인텐트가 들어와도
+    // 효과가 다시 돌지 않아 조용히 무시된다(에뮬레이터에서 실제로 그랬다).
+    LaunchedEffect(DebugImage.pending, ocr, busy) {
+        val path = DebugImage.pending
+        if (path != null && ocr != null && !busy) {
+            DebugImage.consume()
+            val bitmap = decodeBitmap(context, Uri.fromFile(File(path)))
+            if (bitmap != null) {
+                android.util.Log.i(
+                    "HJP",
+                    "debug image=$path decoded=${bitmap.width}x${bitmap.height}",
+                )
+                recognize(bitmap)
+            } else {
+                error = "이미지를 열지 못했어요: $path"
+            }
         }
     }
 

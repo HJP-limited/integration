@@ -89,6 +89,11 @@ class MainActivity : ComponentActivity() {
             DebugQuestion.offer(q)
             intent.removeExtra("q")
         }
+        intent?.getStringExtra("test_image_path")?.let { path ->
+            android.util.Log.i(DIAG_TAG, "onCreate image=$path")
+            DebugImage.offer(path)
+            intent.removeExtra("test_image_path")
+        }
 
         // 에이전트 배선은 프로세스 하나에 하나뿐이다(HjpApplication 이 들고 있다).
         // 액티비티가 다시 만들어져도 같은 세션이 이어지도록 여기서 새로 만들지 않는다.
@@ -116,6 +121,11 @@ class MainActivity : ComponentActivity() {
         val q = intent.getStringExtra("q")
         android.util.Log.i(DIAG_TAG, "onNewIntent q=$q")
         DebugQuestion.offer(q)
+        intent.getStringExtra("test_image_path")?.let { path ->
+            android.util.Log.i(DIAG_TAG, "onNewIntent image=$path")
+            DebugImage.offer(path)
+            intent.removeExtra("test_image_path")
+        }
     }
 
     /**
@@ -128,6 +138,11 @@ class MainActivity : ComponentActivity() {
             android.util.Log.i(DIAG_TAG, "onResume q=$q")
             intent.removeExtra("q")
             DebugQuestion.offer(q)
+        }
+        intent?.getStringExtra("test_image_path")?.let { path ->
+            android.util.Log.i(DIAG_TAG, "onResume image=$path")
+            intent.removeExtra("test_image_path")
+            DebugImage.offer(path)
         }
     }
 }
@@ -187,6 +202,31 @@ internal object DebugQuestion {
 
 
 /**
+ * 디버그용 이미지 주입구. [DebugQuestion] 의 촬영판이다.
+ *
+ * 갤러리 선택기는 시스템 화면이라 adb 로 눌러 태울 수가 없다. 그래서 실기기·에뮬레이터에서
+ * 인식 경로를 확인하려면 사람이 손으로 고르는 수밖에 없었다. 경로를 인텐트로 받으면 갤러리로
+ * 고른 것과 **똑같은 경로**(decodeBitmap -> EXIF 보정 -> OCR)를 탄다:
+ *
+ *     adb shell am start -n com.example.hjp/.MainActivity --es test_image_path /sdcard/card.jpg
+ *
+ * 원본 App 트랙에도 같은 것이 있다. 운영 동작에는 영향이 없다 — 인텐트가 없으면 아무 일도
+ * 안 한다.
+ */
+internal object DebugImage {
+    var pending by mutableStateOf<String?>(null)
+        private set
+
+    fun offer(path: String?) {
+        if (!path.isNullOrBlank()) pending = path.trim()
+    }
+
+    fun consume() {
+        pending = null
+    }
+}
+
+/**
  * 말풍선 하나. [cards] 는 **그 턴에 도구가 실제로 찾은** 명함이다 — 화면이 같은 질문으로
  * 다시 검색해서 채우지 않는다(재작성된 질의를 모르는 채 검색하면 답과 카드가 어긋난다).
  */
@@ -217,6 +257,14 @@ fun HjpApp(
         if (DebugQuestion.pending != null) {
             signedIn = true
             selectedTab = AppTab.Agent
+            overlay = null
+        }
+    }
+    // 디버그 인텐트로 이미지가 들어오면 촬영 화면으로 옮긴다 — 그 화면이 떠야 인식이 돈다.
+    LaunchedEffect(DebugImage.pending) {
+        if (DebugImage.pending != null) {
+            signedIn = true
+            selectedTab = AppTab.Capture
             overlay = null
         }
     }
