@@ -3,7 +3,11 @@ package com.example.hjp.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Path
+import android.graphics.Paint
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +51,7 @@ import androidx.exifinterface.media.ExifInterface
 import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.ocr.AndroidOcr
 import com.example.hjp.ocr.CardParser
+import com.example.hjp.ocr.OcrPipeline
 import com.example.hjp.ocr.OcrCardMapper
 import com.example.hjp.ui.theme.EmeraldOnSoft
 import com.example.hjp.ui.theme.EmeraldSoft
@@ -55,9 +60,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.max
 
 /** 인식은 끝났고 아직 저장 전인 명함. SCR-03 → SCR-04 로 넘어가는 값. */
 data class OcrDraft(
+    /** 검출 영역을 그려 넣은 사본. 사람이 "무엇을 읽었는지" 볼 수 있어야 한다. */
     val image: Bitmap,
     val fields: List<CardParser.Field>,
     val regionCount: Int,
@@ -106,7 +113,7 @@ fun CaptureScreen(
             result.onSuccess {
                 onRecognized(
                     OcrDraft(
-                        image = bitmap,
+                        image = drawDetections(bitmap, it.regions),
                         fields = it.fields,
                         regionCount = it.regions.size,
                         elapsedMs = System.currentTimeMillis() - startedAt,
@@ -258,13 +265,15 @@ fun OcrResultScreen(
     ) {
         ScreenHeader("OCR 결과 확인", "추출된 필드를 확인하고 저장합니다", onBack = onCancel)
 
+        // Crop 이 아니라 Fit 이다. 이 이미지에는 검출 박스가 그려져 있는데, 잘라서 보여 주면
+        // 가장자리 글줄의 박스가 화면 밖으로 나가 "못 찾은 것"과 구별되지 않는다.
         Image(
             bitmap = draft.image.asImageBitmap(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
+            contentDescription = "인식된 명함과 검출 영역",
+            contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(190.dp)
+                .height(220.dp)
                 .clip(RoundedCornerShape(24.dp)),
         )
 
@@ -326,9 +335,20 @@ private fun newCaptureUri(context: Context): Uri {
  */
 private fun decodeBitmap(context: Context, uri: Uri): Bitmap? =
     try {
+        // 먼저 크기만 읽어 몇 분의 1 로 줄여 받을지 정한다. 요즘 폰 카메라는 5000만 화소라
+        // 원본 그대로 펼치면 한 장에 200MB 가까이 쓴다 — 앱이 OutOfMemory 로 죽는다.
+        // 검출기가 어차피 긴 변 960 으로 줄이므로 2000 이면 인식 품질에 손해가 없다.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri).use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        }
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / sample > MAX_DECODED_SIDE) sample *= 2
+
         val decoded = context.contentResolver.openInputStream(uri).use { input ->
             // ARGB_8888 로 강제한다 — OpenCV 의 bitmapToMat 이 하드웨어 비트맵을 못 읽는다.
             BitmapFactory.decodeStream(input, null, BitmapFactory.Options().apply {
+                inSampleSize = sample
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             })
         }
@@ -336,6 +356,49 @@ private fun decodeBitmap(context: Context, uri: Uri): Bitmap? =
     } catch (_: Throwable) {
         null
     }
+
+/**
+ * 검출된 글줄을 원본 위에 그려 준다.
+ *
+ * 인식이 틀렸을 때 **어디서 틀렸는지** 보이게 하려는 것이다. 필드 목록만 보면 글자를 잘못
+ * 읽은 것인지 아예 못 찾은 것인지 구별할 수 없는데, 박스를 보면 바로 안다 — 박스가 없으면
+ * 검출 실패, 박스는 맞는데 값이 이상하면 인식 실패다.
+ *
+ * 흰 테두리를 깔고 그 위에 검은 선을 얹는다. 명함 바탕색이 무엇이든 읽히게 하려는 것으로,
+ * 원본 App 트랙과 같은 방식이다.
+ */
+private fun drawDetections(src: Bitmap, regions: List<OcrPipeline.Region>): Bitmap {
+    if (regions.isEmpty()) return src
+    val out = src.copy(Bitmap.Config.ARGB_8888, true) ?: return src
+    val canvas = Canvas(out)
+    // 선 굵기를 이미지 크기에 맞춘다 — 고정 픽셀이면 큰 사진에서 실처럼 가늘어진다.
+    val width = max(2.2f, out.width / 400f)
+    val halo = Paint().apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = width * 2.6f
+        isAntiAlias = true
+    }
+    val stroke = Paint().apply {
+        color = Color.rgb(10, 10, 10)
+        style = Paint.Style.STROKE
+        strokeWidth = width
+        isAntiAlias = true
+    }
+    regions.forEach { region ->
+        val path = Path()
+        region.poly.forEachIndexed { index, point ->
+            if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
+        }
+        path.close()
+        canvas.drawPath(path, halo)
+        canvas.drawPath(path, stroke)
+    }
+    return out
+}
+
+/** 이보다 긴 변은 반씩 줄여 받는다. 원본 App 트랙과 같은 값이다. */
+private const val MAX_DECODED_SIDE = 2000
 
 /**
  * EXIF 태그가 시키는 대로 회전·반전한다. 태그가 없거나 읽지 못하면 원본을 그대로 돌려준다 —
