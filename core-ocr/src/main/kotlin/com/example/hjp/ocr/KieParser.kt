@@ -51,11 +51,21 @@ class KieParser private constructor(
                 val tokenizer = env.createSession(tokenizerBytes, tokOpts)
                 val classifier = env.createSession(classifierBytes, OrtSession.SessionOptions())
                 val arr = JSONArray(labelsJson)
-                KieParser(env, tokenizer, classifier, List(arr.length()) { arr.getString(it) })
+                val parser = KieParser(env, tokenizer, classifier, List(arr.length()) { arr.getString(it) })
+                if (parser.pairLooksConsistent()) parser else null
             } catch (_: Throwable) {
                 null
             }
         }
+
+        /**
+         * 짝이 맞는지 확인할 때 쓰는 문장과 정답.
+         *
+         * 전화번호를 고른 이유: 두 모델(어휘 축소 전·후) 모두 이 문장을 확실하게 맞힌다.
+         * 애매한 문장을 쓰면 멀쩡한 모델을 떨어뜨릴 수 있다.
+         */
+        private const val CANARY_TEXT = "010-1234-5678"
+        private const val CANARY_FIELD = "mobile"
 
         private val EMAIL = Regex("""[\w.+-]+@[\w-]+(\.[\w-]+)+""")
         private val PHONE = Regex("""(?:0\d{1,2}|1\d{3})[-. ]?\d{3,4}[-. ]?\d{4}""")
@@ -149,6 +159,25 @@ class KieParser private constructor(
             }
         }
     }
+
+    /**
+     * 토크나이저와 분류기가 **한 벌인지** 확인한다. 아니면 이 경로를 쓰지 않는다.
+     *
+     * 두 파일은 짝이어야 한다 — 분류기의 임베딩 행 번호가 곧 토크나이저가 내놓는 id 다.
+     * 그런데 토크나이저는 저장소에 있고 분류기(36.6MB)는 손으로 넣는 파일이라, 어휘를 줄이기
+     * 전의 옛 분류기를 넣으면 **id 가 어긋난 채로 그냥 돈다.** 예외도 안 나고 결과만 엉킨다 —
+     * 이름 칸에 전화번호가 들어가는 식이라 눈으로도 한참 뒤에야 알아챈다.
+     *
+     * 반대 조합(옛 토크나이저 + 새 분류기)은 id 가 범위를 벗어나 예외로 죽으므로 저절로
+     * 걸린다. 위험한 건 조용한 쪽뿐이라, 확실한 문장 하나를 넣어 보고 답이 맞는지 본다.
+     * 시작할 때 한 번, 추론 한 번이면 끝난다.
+     *
+     * 틀리면 null 을 돌려 [CardParser] 휴리스틱으로 내려간다 — 정확도는 떨어져도(98.0% ->
+     * 85.3%) 틀린 값을 명함에 저장하는 것보다 낫다.
+     */
+    private fun pairLooksConsistent(): Boolean = runCatching {
+        classify(listOf(CANARY_TEXT)).firstOrNull() == CANARY_FIELD
+    }.getOrDefault(false)
 
     /**
      * Regions -> UI fields, same Field type/ordering contract as [CardParser].

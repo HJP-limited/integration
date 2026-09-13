@@ -7,9 +7,37 @@
 | `det.onnx` | 4.7 MB | PP-OCRv5_mobile_det (`ilaylow/PP_OCRv5_mobile_onnx`) | O |
 | `rec.onnx` | 13 MB | korean_PP-OCRv5_mobile_rec (`monkt/paddleocr-onnx`) | O |
 | `korean_dict.txt` | 59 KB | rec charset (자모 단위, CTC 디코드 후 NFC 조합) | O |
-| `kie_tokenizer.onnx` | 4.9 MB | XLM-R SentencePiece, ortx custom op 그래프 | O |
+| `kie_tokenizer.onnx` | 0.85 MB | XLM-R SentencePiece(어휘 축소본), ortx custom op 그래프 | O |
 | `kie_labels.json` | 208 B | index → 필드명 15종 | O |
-| `kie_minilm_int8.onnx` | **113 MB** | fine-tuned MiniLM 분류기, dynamic int8 | **X (gitignore)** |
+| `kie_minilm_int8.onnx` | **36.6 MB** | fine-tuned MiniLM 분류기, dynamic int8 + 어휘 축소 | **X (gitignore)** |
+
+### 이 둘은 반드시 한 벌로 쓴다
+
+분류기의 임베딩 행 번호가 곧 토크나이저가 내놓는 id 다. 섞어 쓰면:
+
+- **옛 토크나이저(4.9MB) + 새 분류기(36.6MB)** — id 가 범위를 벗어나 예외로 죽는다. 걸린다.
+- **새 토크나이저(0.85MB) + 옛 분류기(113MB)** — id 가 범위 안이라 **그냥 돈다.** 예외도 없이
+  결과만 엉킨다. 토크나이저는 저장소에 있고 분류기는 손으로 넣는 파일이라 실제로 일어날 수
+  있는 조합이다.
+
+그래서 `KieParser` 가 시작할 때 확실한 문장 하나("010-1234-5678" -> `mobile`)를 넣어 보고,
+답이 틀리면 이 경로를 쓰지 않고 `CardParser` 휴리스틱으로 내려간다.
+
+### 어휘 축소본 (2026-09-14 교체)
+
+250,002 조각 중 **82,818 개가 ASCII 여러 글자 조각**(XLM-R 이 유럽어 단어를 담으려고 들고 있는
+것들)이다. 명함 필드 분류에는 쓰이지 않으므로 상위 15,000 개만 남긴다
+(`OCR/kie/trim_vocab.py --ascii-cap 15000`). 임베딩 행 250,037 -> 37,258, 파일 113MB -> 36.6MB.
+
+**압축이 아니라 안 쓰는 어휘를 잘라내는 것**이라 분류 성능은 보존된다 — 인코더 12층(21.8MB)과
+분류기 헤드는 손대지 않는다. 실제로 두 파일의 텐서를 대조하면 헤드와 인코더 130 개가 비트
+단위로 같고, 다른 6 개는 position/token_type 임베딩의 양자화 차이(역양자화 후 최대 0.0046)뿐이다.
+
+알려진 손실: **한자 이름(`name_hanja`)**. 축소 규칙이 "여러 글자 조각은 한글이나 ASCII 가 끼어
+있어야 남긴다" 인데 한자는 거기 없어서 한자 조각이 잘린다. rec charset 에는 한자가 있으므로
+읽히기는 하지만 분절이 달라져 `name_hanja` 를 놓친다(실측: 南多恩 -> `logo_text`).
+이 제품에서 한자 이름을 쓰지 않기로 해서 그대로 둔다. 살리려면 `trim_vocab.py` 의
+`_hangul_or_ascii` 에 U+4E00–U+9FFF 를 더해 다시 만든다.
 
 ## kie_minilm_int8.onnx 재생성
 
