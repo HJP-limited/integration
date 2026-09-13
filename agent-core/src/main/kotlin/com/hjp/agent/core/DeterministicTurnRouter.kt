@@ -946,7 +946,14 @@ object DeterministicTurnRouter {
         // 문장을 "대전에 명함 찾아줘"로 바꿔 변호사를 잃었다(실측). 어느 말이 직함인지는
         // 카드가 안다 — 목록을 늘리는 대신 저장소에 묻는다.
         if (namesAKnownTitle || namesAKnownPerson) return true
-        return asksForPeople && hasAttribute
+        // 장소도 회사·부서와 같은 **속성**이다. "분당구에 있는 사람 찾아줘" 는 조건으로 사람을
+        // 고르는 말이지 다른 무엇이 아니다.
+        //
+        // 이게 없어서 그런 문장이 아무 분류도 못 받고 "연락처 검색이 필요한 요청이 아닙니다"
+        // 로 거부됐다(노트북 러너 실측). 공백 없는 "분당구 사람 찾아줘" 가 되던 것은 우연이다 —
+        // 아래쪽에서 문장이 "분당구 명함 찾아줘" 로 재작성되면서 '명함' 이 붙어 통과했을
+        // 뿐이고, 장소 역할 표현이 있으면 그 재작성을 건너뛰므로 통과할 길이 사라졌다.
+        return asksForPeople && (hasAttribute || namesAPlaceRole(raw))
     }
 
     /**

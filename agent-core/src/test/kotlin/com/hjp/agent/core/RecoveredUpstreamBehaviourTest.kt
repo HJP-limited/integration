@@ -158,4 +158,34 @@ class RecoveredUpstreamBehaviourTest {
         val plan = DeterministicTurnRouter.route(context("두 번째 질문이 뭐였지", people))
         assertEquals(false, plan is TurnRoutePlan.GroundedContact)
     }
+
+    // ---- 5. 장소 조건 검색 ---------------------------------------------------------------
+
+    @Test
+    fun `a place condition with a generic person word is a search`() {
+        // "분당구에 있는 사람 찾아줘" 가 아무 분류도 못 받고 정책에 거부됐다
+        // ("연락처 검색이 필요한 요청이 아닙니다", 노트북 러너 실측). 장소도 회사·부서와
+        // 같은 속성인데 속성 목록에 장소가 없었다.
+        listOf(
+            "분당구에 있는 사람 찾아줘",
+            "판교에서 일하는 분 찾아줘",
+            "대전에 근무하는 직원 찾아줘",
+        ).forEach { text ->
+            val plan = DeterministicTurnRouter.route(context(text))
+            assertFalse(
+                "$text was settled without searching: $plan",
+                plan is TurnRoutePlan.Clarify || plan is TurnRoutePlan.Unsupported,
+            )
+        }
+    }
+
+    @Test
+    fun `a place role marker does not turn a compose into a search`() {
+        // 장소를 속성으로 인정하되 실행 의도까지 삼키면 안 된다.
+        val plan = DeterministicTurnRouter.route(context("판교에서 만난 사람에게 메일 보내줘"))
+        assertFalse(
+            "compose was reclassified as a search: $plan",
+            plan is TurnRoutePlan.AnswerFromHistory,
+        )
+    }
 }
