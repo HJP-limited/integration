@@ -36,6 +36,8 @@ class TextLineOrientation private constructor(
      */
     fun upright(crop: Mat) {
         if (crop.empty()) return
+        // 짧은 크롭은 이 모델이 못 맞힌다. 묻지 않는다 — [isWorthAsking] 참고.
+        if (!isWorthAsking(crop.cols(), crop.rows())) return
         val flipped = runCatching { isUpsideDown(crop) }.getOrDefault(false)
         if (flipped) Core.rotate(crop, crop, Core.ROTATE_180)
     }
@@ -94,14 +96,44 @@ class TextLineOrientation private constructor(
         private val STD = floatArrayOf(0.229f, 0.224f, 0.225f)
 
         /**
-         * 뒤집혔을 확률이 이보다 커야 돌린다. 단순 다수결(0.5)보다 조금 높게 잡았다.
+         * 이보다 납작한 글줄에만 묻는다. 짧은 크롭에서는 **확신을 갖고 틀리기** 때문이다.
          *
-         * 분류기는 0/180 둘 중 하나를 반드시 고르므로, 장식 글자나 로고처럼 위아래가 무의미한
-         * 조각에서도 답을 낸다. 그런 경우 절반은 틀리는데, **틀려서 돌린 쪽이 안 돌린 쪽보다
-         * 나쁘다** — 원래 멀쩡했을 글줄을 뒤집기 때문이다. 그래서 반반에 가까우면 그대로 둔다.
+         * 실측(합성 한글 글줄, 똑바로 선 크롭의 P(180) — 낮아야 맞는 것):
          *
-         * 실측(합성 한글 글줄): 똑바로 0.88~1.00, 뒤집힘 0.67~1.00. 0.6 이면 그 뒤집힘들을
-         * 잡으면서 애매한 구간은 건드리지 않는다.
+         * ```
+         *   가로세로비  글자수   P(180)
+         *      1.07       1     0.752   <- 틀림
+         *      1.89       2     0.755   <- 틀림
+         *      2.74       3     0.866   <- 틀림 ("남다은")
+         *      3.58       4     0.893   <- 틀림
+         *      5.26       6     0.609   <- 틀림
+         *      5.56       7     0.001   <- 맞음
+         *      8.39      11     0.000   <- 맞음
+         *     12.51      17     0.000   <- 맞음
+         * ```
+         *
+         * 긴 글줄에서 0.001 대 0.999 로 깨끗하게 갈리는 것이 전처리가 맞다는 증거다. 모델이
+         * 짧은 크롭에 약한 것이고, 그건 신뢰도로 거를 수 없다 — **틀린 답이 0.9 로 확신에 차
+         * 있다.** 실제로 이 경계를 두기 전에는 이름("남다은")이 통째로 뒤집혀 "긍그" 로 읽혔다.
+         *
+         * 경계는 5.56 부터 맞으므로 여유를 둬 6 으로 잡았다. 이보다 짧은 글줄은 이 단계가
+         * 없던 때와 같게 지나간다 — 방향 보정을 못 할 뿐, 멀쩡한 글줄을 망치지는 않는다.
+         */
+        private const val MIN_ASPECT = 6.0
+
+        /**
+         * 이 크기의 글줄에 대해 모델의 답을 믿어도 되는가.
+         *
+         * Mat 이 아니라 치수만 받는다 — 규칙을 눈으로 확인할 수 있어야 하는데, OpenCV 네이티브는
+         * JVM 단위 시험에 없어서 Mat 을 만드는 순간 시험이 못 돈다.
+         */
+        internal fun isWorthAsking(width: Int, height: Int): Boolean =
+            height > 0 && width.toDouble() / height >= MIN_ASPECT
+
+        /**
+         * 뒤집혔을 확률이 이보다 커야 돌린다. [MIN_ASPECT] 를 통과한 크롭은 보통 0.001 이나
+         * 0.999 로 나오므로 이 값이 실제로 갈라야 할 일은 드물다 — 경계가 애매한 크롭을 위한
+         * 두 번째 안전장치다.
          */
         private const val FLIP_THRESHOLD = 0.6f
 

@@ -2,6 +2,8 @@ package com.example.hjp.ocr
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -46,5 +48,47 @@ class TextLineOrientationTest {
     fun `the asset name matches what the repository ships`() {
         // 이름이 어긋나면 모델이 있어도 조용히 안 쓰인다 — 폰 앞에서 한참 헤매게 되는 실패다.
         assertEquals("textline_ori.onnx", TextLineOrientation.ASSET)
+    }
+
+    // ---- 짧은 글줄에는 묻지 않는다 -------------------------------------------------------
+
+    /**
+     * 이 모델은 짧은 크롭에서 **확신을 갖고 틀린다.** 아래 수치는 똑바로 선 합성 한글 글줄을
+     * 실제로 재서 얻은 P(180) 이다 — 낮아야 맞는 것이다:
+     *
+     * ```
+     *   가로세로비  글자수   P(180)
+     *      1.07       1     0.752   틀림
+     *      2.74       3     0.866   틀림  ("남다은")
+     *      3.58       4     0.893   틀림
+     *      5.26       6     0.609   틀림
+     *      5.56       7     0.001   맞음
+     *     12.51      17     0.000   맞음
+     * ```
+     *
+     * 이 경계를 두기 전에는 이름이 통째로 뒤집혀 "긍그" 로 읽혔다 — 분류기를 넣기 전에는
+     * 멀쩡하던 글줄이다. 신뢰도로는 못 거른다: **틀린 답이 0.9 로 확신에 차 있다.**
+     */
+    @Test
+    fun `the classifier is only asked about lines long enough to be reliable`() {
+        // 실측에서 틀린 비율들 — 물어보면 안 된다.
+        listOf(160 to 150, 160 to 60, 160 to 45, 160 to 31).forEach { (w, h) ->
+            assertFalse(
+                "aspect ${w.toDouble() / h} should not be asked",
+                TextLineOrientation.isWorthAsking(w, h),
+            )
+        }
+        // 실측에서 맞은 비율들 — 물어봐야 한다.
+        listOf(160 to 26, 160 to 19, 160 to 12).forEach { (w, h) ->
+            assertTrue(
+                "aspect ${w.toDouble() / h} should be asked",
+                TextLineOrientation.isWorthAsking(w, h),
+            )
+        }
+    }
+
+    @Test
+    fun `a zero-height crop is not asked about`() {
+        assertFalse(TextLineOrientation.isWorthAsking(160, 0))
     }
 }
