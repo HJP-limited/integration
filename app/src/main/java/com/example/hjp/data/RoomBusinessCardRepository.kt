@@ -1,6 +1,7 @@
 package com.example.hjp.data
 
 import android.content.Context
+import android.util.Log
 import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.BusinessCardUpdateResult
 import com.hjp.tool.contact.BusinessCardEmbeddingStore
@@ -21,6 +22,7 @@ class RoomBusinessCardRepository(
     private val json: Json = Json,
 ) : MutableBusinessCardRepository, BusinessCardEmbeddingStore, BusinessCardKeywordIndex {
     private val seedRepository = AssetBusinessCardRepository(context)
+    private val bundledEmbeddings = BundledCardEmbeddings(context, json)
     private val seedMutex = Mutex()
 
     override suspend fun loadAll(): List<BusinessCardRecord> {
@@ -120,6 +122,21 @@ class RoomBusinessCardRepository(
 
     override suspend fun loadEmbeddings(modelName: String): List<StoredCardEmbedding> {
         seedIfEmpty()
+        dao.loadEmbeddings(modelName).takeIf(List<CardEmbeddingEntity>::isNotEmpty)?.let { rows ->
+            return rows.map(CardEmbeddingEntity::toStoredEmbedding)
+        }
+        if (!bundledEmbeddings.supports(modelName)) return emptyList()
+        seedMutex.withLock {
+            if (dao.loadEmbeddings(modelName).isEmpty()) {
+                val cardIds = dao.loadAll().mapTo(hashSetOf(), BusinessCardEntity::id)
+                val bundled = runCatching { bundledEmbeddings.load(modelName, cardIds) }
+                    .onFailure { Log.w("HjpBundledEmbeddings", "Bundle rejected; using live vectors", it) }
+                    .getOrDefault(emptyList())
+                if (bundled.isNotEmpty()) {
+                    dao.upsertEmbeddings(bundled.map { it.toEmbeddingEntity() })
+                }
+            }
+        }
         return dao.loadEmbeddings(modelName).map(CardEmbeddingEntity::toStoredEmbedding)
     }
 

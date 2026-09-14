@@ -31,6 +31,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +59,8 @@ import com.example.hjp.ui.theme.EmeraldOnSoft
 import com.example.hjp.ui.theme.EmeraldSoft
 import com.example.hjp.ui.theme.Slate400
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -92,9 +95,19 @@ fun CaptureScreen(
     var ocr by remember { mutableStateOf<AndroidOcr?>(null) }
     var loadFailed by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        val loaded = withContext(Dispatchers.IO) { AndroidOcr.createOrNull(context) }
-        ocr = loaded
-        loadFailed = loaded == null
+        var unowned = withContext(Dispatchers.IO) { AndroidOcr.createOrNull(context) }
+        try {
+            currentCoroutineContext().ensureActive()
+            ocr = unowned
+            loadFailed = unowned == null
+            unowned = null
+        } finally {
+            unowned?.close()
+        }
+    }
+    DisposableEffect(ocr) {
+        val owned = ocr
+        onDispose { owned?.close() }
     }
 
     var busy by remember { mutableStateOf(false) }

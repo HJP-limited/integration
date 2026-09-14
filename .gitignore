@@ -21,7 +21,7 @@ local.properties
 *.task
 *.onnx
 # OCR 검출·인식·토크나이저·방향분류는 합쳐 24MB 라 저장소에 둔다 — 이게 빠지면 클론만으로는
-# 명함 인식이 아예 안 돈다. 분류기(kie_minilm_int8.onnx, 113MB)만 app/.gitignore 로 제외.
+# 명함 인식이 아예 안 돈다. 분류기(kie_minilm_int8.onnx, 36.6MB)만 app/.gitignore 로 제외.
 !app/src/main/assets/ocr/det.onnx
 !app/src/main/assets/ocr/rec.onnx
 !app/src/main/assets/ocr/kie_tokenizer.onnx

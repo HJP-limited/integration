@@ -59,17 +59,21 @@ python kie_export_classifier.py   # best.pt -> fp32(470.9MB) -> int8(113MB) + la
 
 검증: fp32 470.9 MB / int8 118.2 MB 가 나오면 `OCR/kie/README.md` 의 기록과 일치한다.
 
-## 토크나이저와 분류기는 짝이 맞아야 한다
+## 현재 배치된 짝과 재생성 위치
 
-지금 들어있는 두 파일은 **vocab trimming 을 하지 않은 원본 쌍**이다(250,037 vocab).
+현재 `app/src/main/assets/ocr/` 에 배치된 두 파일은 **둘 다 vocab trim 본**이다
+(37,258 vocab): 분류기 36.6MB, 토크나이저 0.85MB. `KieParser` 는 시작할 때 canary 분류를
+실행해 이 짝이 어긋나면 KIE 를 끄고 휴리스틱으로 내려간다.
 
-`HJP_limitededition@r1_phase2_sprint_c` 의 `App/android/.../assets/kie_tokenizer.onnx`(0.9 MB)는
-vocab 을 37,258 로 자른 **trim 본**이라 이 분류기와 토큰 id 가 맞지 않는다. 섞어 쓰면
-분류 결과가 조용히 망가진다 — 둘 다 trim 하거나 둘 다 원본이어야 한다.
-
-trim 본으로 바꾸면 분류기 113 → 36.6 MB, 토크나이저 4.9 → 0.9 MB 로 줄고 정확도 손실은
-없다고 기록돼 있다(`OCR/kie/README.md`). 그러려면 `trim_vocab.py --ascii-cap 15000` →
-`export_onnx_trim.py` 를 학습 데이터와 함께 돌려야 한다.
+축소 도구의 정본은 읽기 전용 리모트
+`upstream-ocr/r1_phase2_sprint_c` 의 `OCR/kie/trim_vocab.py`와
+`OCR/kie/export_onnx_trim.py`다. 이 저장소의 `tools/kie/kie_export_classifier.py`와
+`kie_export_tokenizer.py`는 비교용 **원본 어휘(250,037) 모델**을 만드는 도구이므로 현재
+축소본 위에 덮어쓰면 안 된다. 배치된 한 벌은 Android 런타임에서
+`OcrAssetsInstrumentedTest`로 확인한다. Python 환경에 `onnxruntime-extensions`가 설치돼
+있으면 `python tools/kie/kie_verify.py`로도 같은 10문장을 확인할 수 있다. 데스크톱 Java에서
+extensions 0.13.0과 ONNX Runtime 1.22.0을 한 프로세스에 두면 Windows 네이티브 DLL 초기화가
+충돌하므로 KIE 짝 검증을 `core-ocr` JVM 단위시험에 넣지 않는다.
 
 ## 방향 분류기
 

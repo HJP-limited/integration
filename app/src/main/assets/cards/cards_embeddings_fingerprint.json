@@ -3,6 +3,10 @@
   "count": 1000,
   "embedding_input_sha256": "e86d8a6e25ef66a735253a15754961d277f48a8731ab89a8044d6870a06aed96",
   "answer_sha256": "760e980afda23a30a83b333861fb0b0eab74b704208a0bf75ab674259dd47e05",
+  "runtime_model_sha256": "37115ef7bff76cd37dd86abe503ff511b1032bf85fc624a85c49c84899e92bc5",
+  "runtime_tokenizer_sha256": "d6daa52d93d7aad10e8388bd526c4e501d914b47177398d1d9621f1fe48438c7",
+  "ids_sha256": "0798ba07a6c6019663a1e9f065b39cd4de876c638cb65bf505a9d25469fcbfb1",
+  "vectors_sha256": "c498b35d17cd9549adb66427133346047d65325cb5d34c86b8599a8f233fef4f",
   "fields": [
     "name",
     "nameEn",

@@ -14,6 +14,7 @@ from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parent))
 import card_fingerprint
 import argparse
+import hashlib
 import json
 import struct
 from pathlib import Path
@@ -30,6 +31,8 @@ MODEL_PATH = REPO / "models" / "embeddinggemma-300m"
 IDS_PATH = REPO / "data" / "cards_eval1000_ids.json"
 VECTORS_PATH = REPO / "data" / "cards_eval1000_vectors.bin"
 ASSETS_DIR = REPO / "app" / "src" / "main" / "assets" / "cards"
+RUNTIME_MODEL_SHA256 = "37115ef7bff76cd37dd86abe503ff511b1032bf85fc624a85c49c84899e92bc5"
+RUNTIME_TOKENIZER_SHA256 = "d6daa52d93d7aad10e8388bd526c4e501d914b47177398d1d9621f1fe48438c7"
 
 # CardSearchService.cardEmbeddingInput()과 반드시 동일한 필드 순서/구분자를 써야
 # 나중에 온디바이스에서 재계산될 때(OCR 카드 등) 같은 입력 형식이 된다.
@@ -74,6 +77,12 @@ def main() -> None:
     # 임베딩을 안 돌렸을 때 아무도 눈치채지 못한다(id 는 그대로라 무결성 검사도 통과한다).
     stamp_path = ids_path.parent / card_fingerprint.STAMP_NAME
     fp = card_fingerprint.write_stamp(stamp_path, cards, cards_path.name)
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+    stamp["runtime_model_sha256"] = RUNTIME_MODEL_SHA256
+    stamp["runtime_tokenizer_sha256"] = RUNTIME_TOKENIZER_SHA256
+    stamp["ids_sha256"] = hashlib.sha256(ids_path.read_bytes()).hexdigest()
+    stamp["vectors_sha256"] = hashlib.sha256(vectors_path.read_bytes()).hexdigest()
+    stamp_path.write_text(json.dumps(stamp, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote fingerprint {fp[:16]}... -> {stamp_path}")
 
     print(f"wrote {len(ids)} ids -> {ids_path}")

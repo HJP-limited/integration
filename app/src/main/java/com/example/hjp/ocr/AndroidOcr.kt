@@ -29,8 +29,14 @@ class AndroidOcrAssets(context: Context) : OcrAssets {
 class AndroidOcr private constructor(
     private val pipeline: OcrPipeline,
     private val kie: KieParser?,
-) {
+) : AutoCloseable {
     val fieldClassifier: String = if (kie != null) "MiniLM KIE" else "CardParser 휴리스틱(폴백)"
+    val textLineOrientationEnabled: Boolean get() = pipeline.textLineOrientationEnabled
+
+    override fun close() {
+        kie?.close()
+        pipeline.close()
+    }
 
     fun read(bitmap: Bitmap): Result {
         val bgr = Mat()

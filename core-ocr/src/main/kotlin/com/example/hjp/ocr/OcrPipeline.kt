@@ -33,7 +33,7 @@ import kotlin.math.sqrt
  * 입력을 안드로이드 Bitmap 이 아니라 OpenCV BGR [Mat] 으로 받는다. 이미지 타입만
  * 플랫폼이 변환해 주면 검출·인식 경로 전체가 폰과 노트북에서 같은 코드로 돈다.
  */
-class OcrPipeline(assets: OcrAssets) {
+class OcrPipeline(assets: OcrAssets) : AutoCloseable {
 
     /** 검출 박스 꼭짓점. 플랫폼 이미지 타입에 묶이지 않도록 자체 정의한다. */
     data class Pt(val x: Float, val y: Float)
@@ -76,6 +76,12 @@ class OcrPipeline(assets: OcrAssets) {
             // 마지막 항목이 공백이다. 인식기의 charset 은 blank + 사전 + 공백 순서다.
             add(" ")
         }
+    }
+
+    override fun close() {
+        textLineOrientation?.close()
+        rec.close()
+        det.close()
     }
 
     companion object {

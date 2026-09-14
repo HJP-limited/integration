@@ -57,8 +57,10 @@ public final class BusinessCard {
     }
 
     public String searchableText() {
-        return (name + " " + nameEn + " " + company + " " + title + " " + department + " "
-                + industry + " " + location + " " + memo + " " + tagLine()).toLowerCase(Locale.KOREAN);
+        // Keep this byte-for-byte compatible with scripts/precompute_embeddings.py. Otherwise
+        // every bundled document vector looks stale and a phone recomputes the whole card set.
+        return EmbeddingInput.forCard(
+                name, nameEn, company, title, department, industry, location, memo, tags);
     }
 
     /**

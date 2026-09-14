@@ -4,22 +4,31 @@ KieParser.kt 의 classify() 와 같은 순서로 돈다 — flat tokens -> MAX_L
 <pad>=1 로 우측 패딩 -> (input_ids, attention_mask) -> argmax.
 """
 import json
+import sys
 from pathlib import Path
 
-import numpy as np
-import onnxruntime as ort
-from onnxruntime_extensions import get_library_path
+try:
+    import numpy as np
+    import onnxruntime as ort
+    from onnxruntime_extensions import get_library_path
+except ModuleNotFoundError as error:
+    raise SystemExit(
+        f"필요 패키지가 없습니다: {error.name}. "
+        "onnxruntime, onnxruntime-extensions, numpy를 설치하거나 "
+        "Android의 OcrAssetsInstrumentedTest를 실행하세요."
+    ) from error
 
-OUT = Path(__file__).resolve().parent / "kie_out"
+DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[2] / "app" / "src" / "main" / "assets" / "ocr"
+MODEL_DIR = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_MODEL_DIR
 MAX_LEN = 48
 
-labels = json.loads((OUT / "kie_labels.json").read_text(encoding="utf-8"))
+labels = json.loads((MODEL_DIR / "kie_labels.json").read_text(encoding="utf-8"))
 
 so = ort.SessionOptions()
 so.register_custom_ops_library(get_library_path())
-tok = ort.InferenceSession(str(OUT / "kie_tokenizer.onnx"), so,
+tok = ort.InferenceSession(str(MODEL_DIR / "kie_tokenizer.onnx"), so,
                            providers=["CPUExecutionProvider"])
-cls = ort.InferenceSession(str(OUT / "kie_minilm_int8.onnx"),
+cls = ort.InferenceSession(str(MODEL_DIR / "kie_minilm_int8.onnx"),
                            providers=["CPUExecutionProvider"])
 
 # 명함에 실제로 찍히는 형태의 라인들. 오른쪽이 기대 필드.
@@ -61,3 +70,5 @@ for (text, want), got in zip(samples, pred):
     print(f"{text:<32} {got:<14} {want:<14} {'OK' if hit else 'MISS'}")
 print("-" * 72)
 print(f"일치 {ok}/{len(samples)}")
+if ok != len(samples):
+    raise SystemExit(1)

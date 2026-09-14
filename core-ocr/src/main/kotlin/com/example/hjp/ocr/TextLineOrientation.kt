@@ -138,11 +138,15 @@ class TextLineOrientation private constructor(
         private const val FLIP_THRESHOLD = 0.6f
 
         /** 모델이 없거나 로드에 실패하면 null — 파이프라인이 이 단계를 건너뛴다. */
-        fun createOrNull(env: OrtEnvironment, assets: OcrAssets): TextLineOrientation? {
-            val bytes = assets.bytes(ASSET) ?: return null
-            return runCatching {
+        fun createOrNull(env: OrtEnvironment, assets: OcrAssets): TextLineOrientation? =
+            loadOptional(assets) { bytes ->
                 TextLineOrientation(env, env.createSession(bytes, OrtSession.SessionOptions()))
-            }.getOrNull()
+            }
+
+        /** 선택 자산 계약을 네이티브 런타임 없이도 시험할 수 있게 한 단일 실패 경계. */
+        internal fun <T> loadOptional(assets: OcrAssets, loader: (ByteArray) -> T): T? {
+            val bytes = assets.bytes(ASSET) ?: return null
+            return runCatching { loader(bytes) }.getOrNull()
         }
     }
 }

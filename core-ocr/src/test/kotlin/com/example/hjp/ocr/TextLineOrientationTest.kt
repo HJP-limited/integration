@@ -33,15 +33,17 @@ class TextLineOrientationTest {
 
     @Test
     fun `a missing model yields no stage rather than an exception`() {
-        val env = ai.onnxruntime.OrtEnvironment.getEnvironment()
-        assertNull(TextLineOrientation.createOrNull(env, EmptyAssets))
+        assertNull(TextLineOrientation.loadOptional(EmptyAssets) {
+            error("loader must not run without an asset")
+        })
     }
 
     @Test
     fun `a corrupt model yields no stage rather than an exception`() {
         // 이름만 맞고 내용이 엉뚱한 파일을 집었을 때 촬영 화면이 죽으면 안 된다.
-        val env = ai.onnxruntime.OrtEnvironment.getEnvironment()
-        assertNull(TextLineOrientation.createOrNull(env, GarbageAssets))
+        assertNull(TextLineOrientation.loadOptional(GarbageAssets) {
+            throw IllegalArgumentException("not an ONNX model")
+        })
     }
 
     @Test

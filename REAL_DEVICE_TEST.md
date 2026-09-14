@@ -5,7 +5,7 @@ arm64 안드로이드 기기에서 앱을 돌리는 절차. **아직 실기기�
 
 ## 무엇이 어디에 있나
 
-OCR·KIE 자산(141MB)은 **APK 안에** 들어간다. 따로 넣을 것이 없다.
+OCR·KIE 자산(약 57MB)은 **APK 안에** 들어간다. 따로 넣을 것이 없다.
 
 생성·임베딩 모델(3.1GB)은 APK 에 넣지 않고 설치 후 기기로 민다.
 
@@ -38,7 +38,7 @@ FunctionGemma 는 더 이상 쓰지 않는다 — 대화/도구호출 모델을 
 
 하는 일 — 모델 폴더 확인(못 찾으면 **설치 전에 멈춘다**) → `:app:assembleDebug` →
 APK 안에 `liblitertlm_jni.so`·`libgemma_embedding_model_jni.so`·`kie_minilm_int8.onnx` 가
-실제로 들어갔는지 확인 → 설치 → 모델 4개 전송(크기가 같으면 건너뜀).
+실제로 들어갔는지 확인 → 설치 → 모델 3개 전송(크기가 같으면 건너뜀).
 
 `-SkipBuild` 로 빌드를 건너뛰고, `-ForceModels` 로 크기가 같아도 다시 민다.
 
@@ -47,15 +47,28 @@ APK 안에 `liblitertlm_jni.so`·`libgemma_embedding_model_jni.so`·`kie_minilm_
 
 ## 확인
 
+`install_real_device_debug.ps1`는 설치만 하고 끝나지 않는다. 로컬과 기기의 모델 SHA-256을
+모두 확인한 뒤 아래 네 계측 테스트를 자동 실행한다. 하나라도 없거나 로드/추론에 실패하면
+스크립트가 실패한다. 에뮬레이터에서는 skip하지 않고 명시적으로 실패한다.
+
+```powershell
+.\scripts\install_real_device_debug.ps1
+```
+
+- `RequiredModelsInstrumentedTest`: 생성·임베딩·토크나이저·det/rec/KIE/방향 모델 로드
+- `OcrAssetsInstrumentedTest`: KIE 실제 분류 10/10
+- `LiteRtGatewayToolCallInstrumentedTest`: 실제 Gemma 생성과 도구 호출
+- `EmbeddingGemmaArm64InstrumentedTest`: 라이브 쿼리 임베딩과 하이브리드 검색
+
 앱 → **설정 탭 → 모델** 에서 대화 모델·도구 호출 모델·검색 엔진 상태를 본다.
 **모델 파일 관리** 를 누르면 모델별로 `파일 가져오기` / `동작 확인` 이 있고, 임베딩 모델에는
 `토크나이저 가져오기` 가 따로 있다.
 
 임베딩이 붙었으면 `동작 확인` 이 `active_embedding_model_backed: true`, 768차원을 보고한다.
 
-**모델이 없어도 앱은 돈다.** 임베더가 없으면 키워드 검색으로, KIE 가 없으면 정규식 폴백으로
-내려간다(라인 정확도 98.0% → 85.3%). 대화 모델이 없으면 검색 결과까지만 나온다. 조용히
-내려가므로 상태 화면을 보고 판단해야 한다.
+앱 자체에는 장애 시 폴백이 남아 있지만 **통합 테스트의 성공 조건으로는 인정하지 않는다.**
+임베더가 없으면 키워드 검색, KIE가 없으면 정규식, 대화 모델이 없으면 검색 결과까지만
+동작할 수 있으나 설치 스크립트와 필수 모델 게이트는 그 전에 실패한다.
 
 ## USB 없이
 
@@ -69,6 +82,6 @@ Gemma 4 E2B 가 2.6GB 라 이 경로는 느리다. 케이블이 있으면 USB �
 
 ## 릴리스 APK
 
-`./gradlew :app:assembleRelease` 는 **서명되지 않은** APK(284MB)를 만든다. 기기에 설치하려면
+`./gradlew :app:assembleRelease` 는 **서명되지 않은** APK를 만든다. 기기에 설치하려면
 키스토어를 만들어 `signingConfigs` 를 붙여야 한다. 지금은 설정돼 있지 않다 — 테스트는 디버그
-APK(394MB, x86_64 포함)로 한다.
+APK(2026-09-14 빌드 330.0MB, x86_64 포함)로 한다.

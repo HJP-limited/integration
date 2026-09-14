@@ -24,7 +24,12 @@ class KieParser private constructor(
     private val tokenizer: OrtSession,
     private val classifier: OrtSession,
     private val labels: List<String>,
-) {
+) : AutoCloseable {
+
+    override fun close() {
+        classifier.close()
+        tokenizer.close()
+    }
 
     companion object {
         private const val MAX_LEN = 48
@@ -44,16 +49,32 @@ class KieParser private constructor(
             val classifierBytes = assets.bytes(CLASSIFIER_ASSET) ?: return null
             val tokenizerBytes = assets.bytes(TOKENIZER_ASSET) ?: return null
             val labelsJson = assets.text(LABELS_ASSET) ?: return null
+            var tokenizer: OrtSession? = null
+            var classifier: OrtSession? = null
             return try {
                 val env = OrtEnvironment.getEnvironment()
                 val tokOpts = OrtSession.SessionOptions()
                 tokOpts.registerCustomOpLibrary(OrtxPackage.getLibraryPath())
-                val tokenizer = env.createSession(tokenizerBytes, tokOpts)
-                val classifier = env.createSession(classifierBytes, OrtSession.SessionOptions())
+                val openedTokenizer = env.createSession(tokenizerBytes, tokOpts)
+                tokenizer = openedTokenizer
+                val openedClassifier = env.createSession(classifierBytes, OrtSession.SessionOptions())
+                classifier = openedClassifier
                 val arr = JSONArray(labelsJson)
-                val parser = KieParser(env, tokenizer, classifier, List(arr.length()) { arr.getString(it) })
-                if (parser.pairLooksConsistent()) parser else null
+                val parser = KieParser(
+                    env,
+                    openedTokenizer,
+                    openedClassifier,
+                    List(arr.length()) { arr.getString(it) },
+                )
+                tokenizer = null
+                classifier = null
+                if (parser.pairLooksConsistent()) parser else {
+                    parser.close()
+                    null
+                }
             } catch (_: Throwable) {
+                classifier?.close()
+                tokenizer?.close()
                 null
             }
         }

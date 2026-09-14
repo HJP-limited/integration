@@ -1,8 +1,8 @@
-"""XLM-R SentencePiece 토크나이저를 ONNX 그래프로 export.
+"""XLM-R SentencePiece 원본 어휘 토크나이저를 ONNX 그래프로 export.
 
 OCR/kie/export_onnx.py 의 export_tokenizer() 와 동일하다. 분류기를 vocab trimming 없이
-내보냈으므로 토크나이저도 **원본(untrimmed)** 이어야 id 가 맞는다 — 저장소에 들어있는
-kie_tokenizer.onnx(0.9MB)는 trim 본이라 이 분류기와 짝이 맞지 않는다.
+내보냈으므로 토크나이저도 **원본(untrimmed)** 이어야 id 가 맞는다. 저장소에 배치된
+kie_tokenizer.onnx(0.85MB)는 trim 본이므로 이 스크립트의 출력으로 덮어쓰지 않는다.
 """
 from pathlib import Path
 
