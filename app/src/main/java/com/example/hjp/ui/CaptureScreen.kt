@@ -286,6 +286,7 @@ fun CaptureScreen(
 fun OcrResultScreen(
     draft: OcrDraft,
     saving: Boolean,
+    saveError: String? = null,
     onCancel: () -> Unit,
     onSave: () -> Unit,
     modifier: Modifier = Modifier,
@@ -338,6 +339,18 @@ fun OcrResultScreen(
                 draft.fields.forEach { field ->
                     InfoRow("${field.icon} ${field.label}", field.value)
                 }
+            }
+        }
+
+        saveError?.let { message ->
+            SectionCard {
+                SectionTitle("명함 임베딩 저장 실패")
+                Text(
+                    message,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
 

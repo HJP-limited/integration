@@ -118,6 +118,22 @@ class RyeongContactSearchBackend(
         initializationFailed = false
     }
 
+    /**
+     * Rebuilds the immutable search snapshot after the card store changes.
+     *
+     * Construction refreshes only missing or stale document vectors and persists them through
+     * [BusinessCardEmbeddingStore]. This method is deliberately strict: adding a card must not be
+     * reported as complete when the required embedding model silently fell back to keyword search.
+     */
+    suspend fun refreshAfterCardChange() = withContext(Dispatchers.Default) {
+        invalidate()
+        requireService()
+        check(embeddingModelBacked) {
+            "Business-card embedding refresh failed: " +
+                embeddingFallbackReason.ifBlank { "model-backed embedding unavailable" }
+        }
+    }
+
     private suspend fun requireService(): SearchLookupService {
         service?.let { return it }
         return initMutex.withLock {

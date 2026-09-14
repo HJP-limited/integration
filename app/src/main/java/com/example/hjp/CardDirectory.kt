@@ -19,6 +19,7 @@ import com.hjp.tool.contact.ContactSearchBackend
 class CardDirectory(
     private val repository: RoomBusinessCardRepository,
     private val backend: ContactSearchBackend,
+    private val onCardAdded: suspend () -> Unit,
 ) {
     suspend fun allCards(): List<BusinessCardRecord> = repository.loadAll()
 
@@ -50,5 +51,9 @@ class CardDirectory(
 
     suspend fun addCard(record: BusinessCardRecord) {
         repository.insert(record)
+        // Saving is not complete until every consumer has dropped its old snapshot and the new
+        // document vector has been generated and persisted. The callback throws if that cannot be
+        // guaranteed, so the UI never claims an embedding-less card was fully registered.
+        onCardAdded()
     }
 }

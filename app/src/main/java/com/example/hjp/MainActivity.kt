@@ -76,6 +76,7 @@ import com.example.hjp.ui.SettingsScreen
 import com.example.hjp.ui.theme.HJPTheme
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -98,7 +99,11 @@ class MainActivity : ComponentActivity() {
         // 에이전트 배선은 프로세스 하나에 하나뿐이다(HjpApplication 이 들고 있다).
         // 액티비티가 다시 만들어져도 같은 세션이 이어지도록 여기서 새로 만들지 않는다.
         val container = (application as HjpApplication).container
-        val directory = CardDirectory(container.contactRepository, container.contactBackend)
+        val directory = CardDirectory(
+            container.contactRepository,
+            container.contactBackend,
+            container::refreshAfterCardAdded,
+        )
 
         setContent {
             HJPTheme {
@@ -314,28 +319,40 @@ fun HjpApp(
 
             is Overlay.OcrResult -> {
                 var saving by remember(current) { mutableStateOf(false) }
+                var saveError by remember(current) { mutableStateOf<String?>(null) }
+                var pendingCard by remember(current) { mutableStateOf<BusinessCardRecord?>(null) }
                 val scope = rememberCoroutineScope()
                 OcrResultScreen(
                     draft = current.draft,
                     saving = saving,
+                    saveError = saveError,
                     onCancel = { overlay = null },
                     onSave = {
                         saving = true
+                        saveError = null
                         scope.launch {
                             // id 발급은 전체 카드를 읽고, 저장은 FTS 를 다시 만든다. 메인
                             // 스레드에서 하면 Room 이 IllegalStateException 으로 앱을 죽인다
                             // (에뮬레이터에서 실제로 크래시).
-                            val card = withContext(Dispatchers.IO) {
-                                val saved = OcrCardMapper.toCard(
-                                    current.draft.fields,
-                                    directory.nextOcrCardId(),
-                                    System.currentTimeMillis(),
-                                )
-                                directory.addCard(saved)
-                                saved
+                            try {
+                                // Reuse the same row when a failed model refresh is retried.
+                                // Allocating another ID here would duplicate the OCR card.
+                                val card = pendingCard ?: withContext(Dispatchers.IO) {
+                                    OcrCardMapper.toCard(
+                                        current.draft.fields,
+                                        directory.nextOcrCardId(),
+                                        System.currentTimeMillis(),
+                                    )
+                                }.also { pendingCard = it }
+                                withContext(Dispatchers.IO) { directory.addCard(card) }
+                                overlay = Overlay.CardDetail(card)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                saveError = error.message ?: error.javaClass.simpleName
+                            } finally {
+                                saving = false
                             }
-                            saving = false
-                            overlay = Overlay.CardDetail(card)
                         }
                     },
                     modifier = content,

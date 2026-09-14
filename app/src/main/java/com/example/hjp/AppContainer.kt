@@ -130,6 +130,12 @@ class AppContainer(context: Context) : AutoCloseable {
      * routing, so "박수빈씨 회사가 어디야?" is a lookup rather than a sentence with no route.
      */
     private val contactDirectory = RepositoryContactDirectory(contactRepository)
+
+    /** Completes an OCR insert by rebuilding every card-derived index and persisting its vector. */
+    suspend fun refreshAfterCardAdded() {
+        contactDirectory.invalidate()
+        rawContactBackend.refreshAfterCardChange()
+    }
     private val plugins = listOf(
         SearchContactsPlugin(contactBackend),
         CountContactsPlugin(contactBackend),

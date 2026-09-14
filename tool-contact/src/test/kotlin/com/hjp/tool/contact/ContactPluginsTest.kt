@@ -224,6 +224,42 @@ class ContactPluginsTest {
     }
 
     @Test
+    fun `card change refresh embeds and exposes a newly inserted card immediately`() = runBlocking {
+        val repository = EmbeddingFixtureRepository(listOf(
+            BusinessCardRecord("room-existing", "Existing Person", company = "Existing Company"),
+        ))
+        val engine = CountingEmbeddingGemma("model#live-card-refresh")
+        val backend = RyeongContactSearchBackend(
+            repository,
+            embeddingEngineFactory = { OnDeviceEmbeddingEngine.production(engine) },
+        )
+
+        backend.search("Existing Person", 5)
+        assertEquals(1, engine.documentCalls)
+
+        val added = BusinessCardRecord(
+            "room-new",
+            "New Person",
+            company = "New Semantic Company",
+            memo = "AI machine learning",
+        )
+        repository.add(added)
+        backend.refreshAfterCardChange()
+
+        assertEquals(2, engine.documentCalls)
+        assertTrue(repository.embeddings.any { it.cardId == added.id })
+        assertEquals(added.id, backend.search("AI machine learning", 5).hits.first().card.id)
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `card change refresh stops when model backed embedding is unavailable`() = runBlocking {
+        val repository = EmbeddingFixtureRepository(listOf(
+            BusinessCardRecord("room-new", "New Person"),
+        ))
+        RyeongContactSearchBackend(repository).refreshAfterCardChange()
+    }
+
+    @Test
     fun `get rejects a card id that no longer resolves in room repository`() = runBlocking {
         val card = BusinessCardRecord("room-stale", "김지원")
         var available = true
@@ -256,9 +292,14 @@ class ContactPluginsTest {
         }
 
     private class EmbeddingFixtureRepository(
-        private val cards: List<BusinessCardRecord>,
+        cards: List<BusinessCardRecord>,
     ) : BusinessCardRepository, BusinessCardEmbeddingStore {
+        private val cards = cards.toMutableList()
         val embeddings = mutableListOf<StoredCardEmbedding>()
+        fun add(card: BusinessCardRecord) {
+            cards.removeAll { it.id == card.id }
+            cards += card
+        }
         override suspend fun loadAll() = cards
         override suspend fun getById(cardId: String) = cards.firstOrNull { it.id == cardId }
         override suspend fun loadEmbeddings(modelName: String) =

@@ -7,8 +7,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.hjp.data.HjpDatabase
 import com.example.hjp.data.RoomBusinessCardRepository
 import com.hjp.searchlookup.EmbeddingInput
+import com.hjp.searchlookup.EmbeddingEngine
 import com.hjp.searchlookup.EmbeddingUpdater
 import com.hjp.searchlookup.FloatVectorCodec
+import com.hjp.searchlookup.OnDeviceEmbeddingEngine
+import com.hjp.tool.contact.BusinessCardRecord
+import com.hjp.tool.contact.RyeongContactSearchBackend
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,5 +55,66 @@ class BundledCardEmbeddingsInstrumentedTest {
             database.close()
             context.deleteDatabase(databaseName)
         }
+    }
+
+    @Test
+    fun addingCardImmediatelyAppendsItsVectorToRoom() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val databaseName = "hjp-live-card-embedding-${System.nanoTime()}.db"
+        context.deleteDatabase(databaseName)
+        val database = Room.databaseBuilder(context, HjpDatabase::class.java, databaseName).build()
+        try {
+            val repository = RoomBusinessCardRepository(context, database.businessCardDao())
+            val engine = CountingDocumentEngine()
+            val backend = RyeongContactSearchBackend(
+                repository,
+                embeddingEngineFactory = { OnDeviceEmbeddingEngine.production(engine) },
+            )
+            val directory = CardDirectory(repository, backend, backend::refreshAfterCardChange)
+
+            // Initialize from the 1,000 vectors bundled in the APK. Their hashes match this model.
+            backend.search("AI", 5)
+            assertEquals(0, engine.documentCalls)
+
+            val added = BusinessCardRecord(
+                id = "S999",
+                name = "Live Added Person",
+                company = "Live Vector Company",
+                memo = "newly embedded card",
+                updatedAt = "9999999999999",
+            )
+            directory.addCard(added)
+
+            val stored = repository.loadEmbeddings(engine.name())
+            assertEquals(1_001, stored.size)
+            assertEquals(1, engine.documentCalls)
+            assertTrue(stored.any { it.cardId == added.id })
+            assertEquals(added.id, backend.get(added.id)?.id)
+        } finally {
+            database.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    private class CountingDocumentEngine : EmbeddingEngine {
+        var documentCalls = 0
+
+        override fun embed(input: String): FloatArray = embedQuery(input)
+        override fun embedQuery(input: String): FloatArray = vector(input)
+        override fun embedDocument(input: String): FloatArray {
+            documentCalls += 1
+            return vector(input)
+        }
+        override fun name(): String = MODEL_NAME
+        override fun isModelBacked(): Boolean = true
+
+        private fun vector(input: String) = FloatArray(768).also {
+            it[(input.hashCode() and Int.MAX_VALUE) % it.size] = 1f
+        }
+    }
+
+    private companion object {
+        const val MODEL_NAME = "google/embeddinggemma-300m-ai-edge-rag#" +
+            "m=37115ef7bff76cd3;t=d6daa52d93d7aad1"
     }
 }
