@@ -20,6 +20,7 @@ class RyeongContactSearchBackend(
     private val repository: BusinessCardRepository,
     private val embeddingEngineFactory: () -> EmbeddingEngine = { OnDeviceEmbeddingEngine.production() },
     private val diagnostics: (SearchDiagnostics) -> Unit = {},
+    private val requireModelBacked: Boolean = false,
     /**
      * Told which constraints each search applied, after it applied them.
      *
@@ -53,6 +54,11 @@ class RyeongContactSearchBackend(
         val response = searchService.retrieve(query, limit, mode, indexedKeyword, searchPlanObserver)
         val fallbackUsed = response.fallbackUsed || !embeddingModelBacked
         val fallbackReason = response.fallbackReason.ifBlank { embeddingFallbackReason }
+        if (requireModelBacked && response.mode == RetrievalMode.KEYWORD_ONLY &&
+            fallbackReason != "IDENTIFIER_QUERY_SEMANTIC_EXCLUDED"
+        ) {
+            error("Required semantic search failed: ${fallbackReason.ifBlank { "unknown reason" }}")
+        }
         val hits = response.results.map { result ->
             ContactSearchHit(
                 card = result.card.toRecord(),
@@ -145,6 +151,11 @@ class RyeongContactSearchBackend(
                 }
                 val initializationStarted = System.nanoTime()
                 val embeddingEngine = embeddingEngineFactory()
+                if (requireModelBacked) {
+                    check(embeddingEngine.isModelBacked) {
+                        "Required embedding model unavailable: ${embeddingEngine.diagnosticStatus()}"
+                    }
+                }
                 val embeddingStore = repository as? BusinessCardEmbeddingStore
                 val cardIds = cards.mapTo(hashSetOf()) { it.id }
                 val storedEmbeddings = embeddingStore

@@ -20,6 +20,15 @@ internal class BundledCardEmbeddings(
 
     fun supports(modelName: String): Boolean = modelName.startsWith(MODEL_NAME_PREFIX)
 
+    fun expectedModelName(): String {
+        val stamp = assets.open(FINGERPRINT_ASSET).bufferedReader(Charsets.UTF_8).use {
+            json.parseToJsonElement(it.readText()) as JsonObject
+        }
+        return MODEL_NAME_PREFIX +
+            "${stamp.string("runtime_model_sha256").take(16)};" +
+            "t=${stamp.string("runtime_tokenizer_sha256").take(16)}"
+    }
+
     fun load(modelName: String, currentCardIds: Set<String>): List<StoredCardEmbedding> {
         if (!supports(modelName)) return emptyList()
 
@@ -32,9 +41,7 @@ internal class BundledCardEmbeddings(
         val cards = json.parseToJsonElement(cardsBytes.toString(Charsets.UTF_8)) as JsonArray
         val ids = json.parseToJsonElement(idsBytes.toString(Charsets.UTF_8)) as JsonArray
 
-        val expectedModelName = MODEL_NAME_PREFIX +
-            "${stamp.string("runtime_model_sha256").take(16)};" +
-            "t=${stamp.string("runtime_tokenizer_sha256").take(16)}"
+        val expectedModelName = expectedModelName()
         require(modelName == expectedModelName) {
             "Bundled vectors belong to $expectedModelName, not $modelName"
         }

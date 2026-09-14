@@ -76,6 +76,9 @@ interface BusinessCardDao {
     @Query("SELECT * FROM card_embeddings WHERE model_name = :modelName ORDER BY card_id")
     suspend fun loadEmbeddings(modelName: String): List<CardEmbeddingEntity>
 
+    @Query("SELECT COUNT(*) FROM card_embeddings WHERE model_name = :modelName")
+    suspend fun countEmbeddings(modelName: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertEmbeddings(embeddings: List<CardEmbeddingEntity>)
 }

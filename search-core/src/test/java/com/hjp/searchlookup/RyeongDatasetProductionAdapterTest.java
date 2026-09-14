@@ -59,13 +59,14 @@ public class RyeongDatasetProductionAdapterTest {
     private static final File OUTPUT_ROOT = new File("build/ryeong-eval-diagnostic");
 
     /** Evidence that must never be written to, whatever a path turns out to resolve to. */
-    private static final File PROTECTED_ROOT = new File("../integration_evidence");
+    private static final File PROTECTED_ROOT =
+            new File("src/test/resources/ryeong/production_eval");
 
     /**
      * Inputs are read from run_1, which holds the frozen copies. Read-only — nothing goes back.
      */
     private static final File INPUT_DIR =
-            new File("../integration_evidence/production_eval/run_1");
+            new File("src/test/resources/ryeong/production_eval/run_1");
 
     /**
      * The one query the reference's own audit flags as mislabelled.

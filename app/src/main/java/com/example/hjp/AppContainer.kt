@@ -91,8 +91,9 @@ class AppContainer(context: Context) : AutoCloseable {
     private val rawContactBackend = RyeongContactSearchBackend(
         repository = contactRepository,
         embeddingEngineFactory = {
-            OnDeviceEmbeddingEngine.production(embeddingGemmaEngine.value)
+            OnDeviceEmbeddingEngine.required(embeddingGemmaEngine.value)
         },
+        requireModelBacked = true,
         diagnostics = { event ->
             // The backend's own report of what it did, turned into counts. Read from its declared
             // mode rather than inferred from how many results came back: a semantic pass that
@@ -143,10 +144,11 @@ class AppContainer(context: Context) : AutoCloseable {
         UpdateBusinessCardPlugin(
             contactRepository,
             onUpdated = {
-                rawContactBackend.invalidate()
                 // An edit can rename a card, and the name index is what decides whether a sentence
                 // is about a person. Leaving it stale would keep answering with the old name.
                 contactDirectory.invalidate()
+                // Do not report completion until the updated document vector is persisted and live.
+                rawContactBackend.refreshAfterCardChange()
             },
         ),
         CreateCalendarEventPlugin(AndroidCalendarComposerBackend(appContext)),

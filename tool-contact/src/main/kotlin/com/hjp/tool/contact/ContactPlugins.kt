@@ -263,7 +263,7 @@ class GetContactPlugin(private val backend: ContactSearchBackend) :
 class UpdateBusinessCardPlugin(
     private val repository: MutableBusinessCardRepository,
     private val clockMillis: () -> Long = System::currentTimeMillis,
-    private val onUpdated: (BusinessCardUpdateResult) -> Unit = { },
+    private val onUpdated: suspend (BusinessCardUpdateResult) -> Unit = { },
 ) : TypedToolPlugin<UpdateBusinessCardInput, UpdateBusinessCardOutput>(
     ToolImplementationId("contact.update.local.v1"), ContactToolContracts.Update,
     UpdateInputCodec, UpdateOutputCodec,

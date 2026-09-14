@@ -51,12 +51,6 @@ class ContactReferenceRoutingCharacterizationTest {
     )
 
     @Test
-    @org.junit.Ignore(
-        "Agent_0910 자체 문제이고 통합과 무관하다. act=CONTACT_SEARCH 인데 tools=[] — 즉 라우터는 " +
-        "명함 검색으로 분류했는데 게이트웨이의 프롬프트 파서가 그 문장을 검색 요청으로 읽지 못해 " +
-        "도구를 하나도 부르지 않는다. 저 브랜치의 :app 테스트는 컴파일되지 않아 한 번도 돌아본 적이 " +
-        "없다(같은 커밋 worktree 로 확인). 같은 스위트의 다른 케이스와 아래 10건은 고쳐서 통과한다."
-    )
     fun `naming a real contact and asking about a card field is a contact lookup`() = runBlocking {
         val people = listOf(
             ContactDirectoryFixture.ORDINARY,
@@ -145,12 +139,6 @@ class ContactReferenceRoutingCharacterizationTest {
      * that; without the second, a real person can never be reached by their own name.
      */
     @Test
-    @org.junit.Ignore(
-        "Agent_0910 자체 문제이고 통합과 무관하다. act=CONTACT_SEARCH 인데 tools=[] — 즉 라우터는 " +
-        "명함 검색으로 분류했는데 게이트웨이의 프롬프트 파서가 그 문장을 검색 요청으로 읽지 못해 " +
-        "도구를 하나도 부르지 않는다. 저 브랜치의 :app 테스트는 컴파일되지 않아 한 번도 돌아본 적이 " +
-        "없다(같은 커밋 worktree 로 확인). 같은 스위트의 다른 케이스와 아래 10건은 고쳐서 통과한다."
-    )
     fun `a common-noun name needs a person marker to be a person`() = runBlocking {
         val marked = runFreshTurn("고운말씨 부서 알려줘")
         assertTrue(
@@ -181,12 +169,6 @@ class ContactReferenceRoutingCharacterizationTest {
     // ---- 8.1 positive: the follow-up shape, on a real second turn ---------------------------------
 
     @Test
-    @org.junit.Ignore(
-        "Agent_0910 자체 문제이고 통합과 무관하다. act=CONTACT_SEARCH 인데 tools=[] — 즉 라우터는 " +
-        "명함 검색으로 분류했는데 게이트웨이의 프롬프트 파서가 그 문장을 검색 요청으로 읽지 못해 " +
-        "도구를 하나도 부르지 않는다. 저 브랜치의 :app 테스트는 컴파일되지 않아 한 번도 돌아본 적이 " +
-        "없다(같은 커밋 worktree 로 확인). 같은 스위트의 다른 케이스와 아래 10건은 고쳐서 통과한다."
-    )
     fun `an elliptic follow-up stays on the contact the previous turn established`() = runBlocking {
         val harness = harness()
         try {

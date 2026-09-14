@@ -42,10 +42,10 @@ public class RyeongProductionSearchEvalV3RunnerSelfTest {
     @Rule public final TemporaryFolder temporary = new TemporaryFolder();
 
     /** The frozen input, relative to this module's directory. */
-    private static final Path INPUT =
-            Paths.get("..", "integration_evidence", "production_eval", "run_3", "input");
-    private static final Path GATE = Paths.get("..", "integration_evidence", "production_eval",
-            "run_3", "gate", "ryeong_search_gate_v3.json");
+    private static final Path INPUT = Paths.get("src", "test", "resources", "ryeong",
+            "production_eval", "run_3", "input");
+    private static final Path GATE = Paths.get("src", "test", "resources", "ryeong",
+            "production_eval", "run_3", "gate", "ryeong_search_gate_v3.json");
 
     private RyeongProductionSearchEvalV3Gate gate() throws IOException {
         return RyeongProductionSearchEvalV3Gate.parse(

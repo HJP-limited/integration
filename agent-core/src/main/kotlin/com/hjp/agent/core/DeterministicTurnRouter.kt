@@ -425,16 +425,19 @@ object DeterministicTurnRouter {
         // A downstream action that names a directory-verified person must enter the normal model
         // workflow with a pinned target; otherwise the no-known-target branch asks for clarification
         // before search/get prerequisites can run.
+        val directoryActionAct = actOf(raw, context)
         context.directoryMatches.firstOrNull { it.identifiesAPerson && it.cardIds.size == 1 }
             ?.takeIf { match ->
-                (ActionVocabulary.COMPOSE.any(raw::contains) ||
-                    ActionVocabulary.CALENDAR.any(raw::contains) ||
-                    CardUpdateIntent.hasUpdateVerb(raw)) &&
+                directoryActionAct in setOf(
+                    DialogueAct.ACTION_COMPOSE,
+                    DialogueAct.ACTION_CALENDAR,
+                    DialogueAct.ACTION_UPDATE,
+                ) &&
                     (raw.contains(match.span) || raw.noSpaces().contains(match.name.noSpaces()))
             }
             ?.let { match ->
                 return Decision(
-                    actOf(raw, context),
+                    directoryActionAct,
                     TurnRoutePlan.GroundedContact(
                         text = raw,
                         cardId = match.cardIds.single(),
@@ -541,7 +544,11 @@ object DeterministicTurnRouter {
         fallbackAct: DialogueAct,
         replacesPreviousTarget: Boolean = false,
     ): Decision {
-        val fields = requestedFields(raw)
+        // A real person's name can contain an action word (서수정) or a field word (문자현).
+        // Once the directory has supplied the canonical target, remove that verified name before
+        // interpreting the remainder; otherwise the name itself can turn a read into an update or
+        // compose command.
+        val fields = requestedFields(raw) ?: requestedFields(raw.replace(name, " "))
         if (fields != null) {
             // How the target was *chosen* decides the label, not how much of the card is shown.
             // An ordinal or "처음 말한 사람" picks one of several people, which is a selection;
@@ -1089,12 +1096,17 @@ object DeterministicTurnRouter {
         // the rewritten search still performs the normal fresh lookup.
         val prior = context.memory.selectedContact
         return if (match.cardIds.size == 1 && prior?.cardId != match.cardIds.single()) {
-            TurnRoutePlan.GroundedContact(
-                text = rewritten,
+            // A named attribute question is already fully grounded here. Route it through the same
+            // deterministic fresh-read path used for a remembered contact instead of rewriting it
+            // into a model-owned search. This also prevents field words such as `이메일` from being
+            // mistaken for a compose command at the model boundary.
+            targetedPlan(
+                raw = raw,
                 cardId = match.cardIds.single(),
                 name = match.name,
+                fallbackAct = actOf(raw, context),
                 replacesPreviousTarget = prior != null,
-            )
+            ).plan
         } else TurnRoutePlan.Continue(rewritten)
     }
 

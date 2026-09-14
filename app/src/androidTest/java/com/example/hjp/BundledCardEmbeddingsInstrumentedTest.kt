@@ -12,8 +12,14 @@ import com.hjp.searchlookup.EmbeddingUpdater
 import com.hjp.searchlookup.FloatVectorCodec
 import com.hjp.searchlookup.OnDeviceEmbeddingEngine
 import com.hjp.tool.contact.BusinessCardRecord
+import com.hjp.tool.contact.ContactToolContracts
 import com.hjp.tool.contact.RyeongContactSearchBackend
+import com.hjp.tool.contact.UpdateBusinessCardPlugin
+import com.hjp.tool.contract.ToolExecutionContext
+import com.hjp.tool.contract.ToolExecutionResult
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,6 +41,9 @@ class BundledCardEmbeddingsInstrumentedTest {
 
             val modelName = "google/embeddinggemma-300m-ai-edge-rag#" +
                 "m=37115ef7bff76cd3;t=d6daa52d93d7aad1"
+            // loadAll() itself establishes the APK's baseline index. Search initialization is not
+            // responsible for making the first 1,000 cards usable.
+            assertEquals(1_000, database.businessCardDao().countEmbeddings(modelName))
             val embeddings = repository.loadEmbeddings(modelName)
             assertEquals(1_000, embeddings.size)
             assertEquals(1_000, repository.loadEmbeddings(modelName).size)
@@ -90,6 +99,63 @@ class BundledCardEmbeddingsInstrumentedTest {
             assertEquals(1, engine.documentCalls)
             assertTrue(stored.any { it.cardId == added.id })
             assertEquals(added.id, backend.get(added.id)?.id)
+        } finally {
+            database.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun editingCardImmediatelyReplacesItsPersistedVector() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val databaseName = "hjp-live-card-reembedding-${System.nanoTime()}.db"
+        context.deleteDatabase(databaseName)
+        val database = Room.databaseBuilder(context, HjpDatabase::class.java, databaseName).build()
+        try {
+            val repository = RoomBusinessCardRepository(context, database.businessCardDao())
+            val engine = CountingDocumentEngine()
+            val backend = RyeongContactSearchBackend(
+                repository,
+                embeddingEngineFactory = { OnDeviceEmbeddingEngine.production(engine) },
+            )
+            backend.search("AI", 5)
+            assertEquals(0, engine.documentCalls)
+
+            val before = repository.loadEmbeddings(engine.name()).first { it.cardId == "T001" }
+            val result = UpdateBusinessCardPlugin(
+                repository = repository,
+                clockMillis = { 1_700_000_000_000L },
+                onUpdated = { backend.refreshAfterCardChange() },
+            ).execute(
+                com.hjp.tool.contract.ToolRequest(
+                    callId = "update-and-reembed",
+                    capabilityId = ContactToolContracts.Update.capabilityId,
+                    contractVersion = ContactToolContracts.Update.version,
+                    arguments = buildJsonObject {
+                        put("card_id", "T001")
+                        put("updates", buildJsonObject { put("memo", "즉시 재임베딩 검증") })
+                    },
+                ),
+                ToolExecutionContext("session", "turn", "ko-KR", "Asia/Seoul"),
+            )
+
+            assertTrue(result is ToolExecutionResult.Success)
+            assertEquals(1, engine.documentCalls)
+            val stored = repository.loadEmbeddings(engine.name())
+            assertEquals(1_000, stored.size)
+            val after = stored.first { it.cardId == "T001" }
+            assertTrue(before.sourceTextHash != after.sourceTextHash)
+            val updatedCard = requireNotNull(repository.getById("T001"))
+            assertEquals(
+                EmbeddingUpdater.sha256(
+                    EmbeddingInput.forCard(
+                        updatedCard.name, updatedCard.nameEn, updatedCard.company, updatedCard.title,
+                        updatedCard.department, updatedCard.industry, updatedCard.location,
+                        updatedCard.memo, updatedCard.tags,
+                    ),
+                ),
+                after.sourceTextHash,
+            )
         } finally {
             database.close()
             context.deleteDatabase(databaseName)

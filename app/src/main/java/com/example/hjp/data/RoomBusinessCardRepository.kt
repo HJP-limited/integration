@@ -147,19 +147,26 @@ class RoomBusinessCardRepository(
     }
 
     private suspend fun seedIfEmpty() {
-        if (dao.count() > 0) {
-            // 명함은 있는데 색인이 비어 있으면 다시 만든다. 색인 규칙이 바뀌면
-            // 마이그레이션이 색인만 비우고(카드는 그대로) 여기서 코틀린으로 다시 채운다 —
-            // 색인 문자열을 만드는 규칙이 SQL 에도 한 벌 더 있으면 둘이 갈라지기 때문이다.
-            if (dao.countFts() == 0) {
-                seedMutex.withLock { if (dao.countFts() == 0) dao.rebuildFts() }
-            }
-            return
-        }
         seedMutex.withLock {
-            if (dao.count() > 0) return@withLock
-            val seedCards = seedRepository.loadAll().map { it.toBusinessCardEntity(json) }
-            dao.insertAllAndReindex(seedCards)
+            if (dao.count() == 0) {
+                val seedCards = seedRepository.loadAll().map { it.toBusinessCardEntity(json) }
+                dao.insertAllAndReindex(seedCards)
+            } else if (dao.countFts() == 0) {
+                dao.rebuildFts()
+            }
+
+            // The 1,000-card semantic index is baseline application data, not an optional cache.
+            // Seed it with the cards so first-run tests/search never perform 1,000 live inferences.
+            val modelName = bundledEmbeddings.expectedModelName()
+            val cards = dao.loadAll()
+            if (dao.countEmbeddings(modelName) < cards.size) {
+                val existing = dao.loadEmbeddings(modelName).mapTo(hashSetOf()) { it.cardId }
+                val bundled = bundledEmbeddings.load(modelName, cards.mapTo(hashSetOf()) { it.id })
+                    .filterNot { it.cardId in existing }
+                if (bundled.isNotEmpty()) {
+                    dao.upsertEmbeddings(bundled.map { it.toEmbeddingEntity() })
+                }
+            }
         }
     }
 

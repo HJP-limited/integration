@@ -10,9 +10,13 @@ public final class OnDeviceEmbeddingEngine implements EmbeddingEngine {
     private volatile String fallbackReason = "";
 
     public OnDeviceEmbeddingEngine(EmbeddingEngine modelEngine, EmbeddingEngine fallback) {
+        this(modelEngine, fallback, true);
+    }
+
+    private OnDeviceEmbeddingEngine(EmbeddingEngine modelEngine, EmbeddingEngine fallback, boolean fallbackEnabled) {
         this.modelEngine = modelEngine;
         this.fallback = fallback == null ? new LocalEmbeddingEngine() : fallback;
-        this.fallbackEnabled = true;
+        this.fallbackEnabled = fallbackEnabled;
         if (modelEngine == null || !modelEngine.isModelBacked()) {
             this.fallbackUsed = true;
             this.fallbackReason = modelEngine == null
@@ -26,6 +30,10 @@ public final class OnDeviceEmbeddingEngine implements EmbeddingEngine {
     }
     public static OnDeviceEmbeddingEngine production(EmbeddingEngine modelEngine) {
         return new OnDeviceEmbeddingEngine(modelEngine, new LocalEmbeddingEngine());
+    }
+    /** Shipping-app path: missing or failed model inference is never replaced by synthetic vectors. */
+    public static OnDeviceEmbeddingEngine required(EmbeddingEngine modelEngine) {
+        return new OnDeviceEmbeddingEngine(modelEngine, null, false);
     }
 
     @Override public float[] embed(String input) {

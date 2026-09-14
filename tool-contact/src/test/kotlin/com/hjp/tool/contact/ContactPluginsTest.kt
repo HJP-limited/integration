@@ -223,6 +223,19 @@ class ContactPluginsTest {
         assertEquals(2, changedEngine.documentCalls)
     }
 
+    @Test(expected = IllegalStateException::class)
+    fun `required semantic search stops instead of falling back to keywords`() = runBlocking {
+        val repository = fixtureRepository(listOf(
+            BusinessCardRecord("room-1", "김지원", company = "비전글로벌"),
+        ))
+
+        RyeongContactSearchBackend(
+            repository = repository,
+            requireModelBacked = true,
+        ).search("인공지능 전문가", 5)
+        Unit
+    }
+
     @Test
     fun `card change refresh embeds and exposes a newly inserted card immediately`() = runBlocking {
         val repository = EmbeddingFixtureRepository(listOf(

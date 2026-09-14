@@ -1,0 +1,70 @@
+{
+  "schema_version": "ryeong-production-search-eval-gate/v3",
+  "run_id": "ryeong_production_search_run_3",
+  "frozen_before_the_run": true,
+  "frozen_at_local": "2026-08-18 KST",
+  "authored_from": "run_2's raw per-category results, converted back to whole counts. No run_3 result existed when this file was written, and none may be consulted to change it.",
+
+  "exact_counts": {
+    "cards": 1000,
+    "queries_total": 203,
+    "queries_scored": 183,
+    "abstention_queries": 20,
+    "excluded_queries": 0,
+    "abstention_passed": 20,
+    "abstention_failed": 0,
+    "stale_id_resolved": 0,
+    "unstable_rankings": 0
+  },
+
+  "minimum_counts": {
+    "overall_top1": 154,
+    "category_top1": {
+      "회사명": 40,
+      "이름": 40,
+      "전화(하이픈X)": 30,
+      "지역+직함(문장)": 39
+    },
+    "category_recall5_complete": {
+      "지역+직함(문장)": 40
+    }
+  },
+
+  "denominators": {
+    "ranking": 183,
+    "abstention": 20,
+    "total": 203,
+    "note": "183 + 20 = 203. The ranking denominator is 183 — not 203, which would fold the hard negatives into a ranking average, and not 143, which is the figure the earlier final report reached by dropping the 지역+직함(문장) category from its own sum."
+  },
+
+  "reported_not_gated": {
+    "metrics": ["P@5", "MRR", "nDCG@5", "latency_ms.p50", "latency_ms.p95", "latency_ms.max", "keyword_fallback_ratio", "semantic_axis_executed"],
+    "categories": ["개념형(easy)", "개념형(hard)"],
+    "why_metrics": "run_2 preserved MRR and nDCG@5 only rounded to four decimals, so any threshold taken from them would be a threshold on rounding rather than on retrieval. They are recorded every run and compared by hand.",
+    "why_categories": "the concept categories are measured with no embedding model. Their numbers describe keyword search attempting questions built to need meaning, so freezing them as a bar would freeze the absence of the model."
+  },
+
+  "run_2_derivation": {
+    "source": "integration_evidence/production_eval/run_2/production_adapter_results.frozen.json",
+    "source_sha256": "95c113ccece3478a1206ffc40f8701f9919e0c9bfb6ef8fdb4309b7d489dafeb",
+    "method": "per-category rate × n, rounded to the nearest whole card",
+    "per_category_top1": {
+      "회사명": "1.0000 × 40 = 40",
+      "이름": "1.0000 × 40 = 40",
+      "전화(하이픈X)": "1.0000 × 30 = 30",
+      "지역+직함(문장)": "0.9750 × 40 = 39",
+      "개념형(easy)": "0.3571 × 14 = 5",
+      "개념형(hard)": "0.0000 × 19 = 0"
+    },
+    "overall_top1_sum": "40 + 40 + 30 + 39 + 5 + 0 = 154",
+    "cross_check": "154 / 183 = 0.841530, which reproduces run_2's reported overall P@1 of 0.8415",
+    "status_of_the_source": "run_2 is INVALID AS PASS for its abstention claim and DIAGNOSTIC ONLY for its ranking figures. Its ranking numbers are used here only as a non-regression floor, which is a use its own defect does not touch: the excluded query had an empty relevant set and contributed to no ranking numerator or denominator."
+  },
+
+  "abstention_contract": {
+    "population": 20,
+    "exclusions_permitted": 0,
+    "requirement": "all twenty hard negatives return an empty result",
+    "note": "run_1 failed this at 19/20 and run_2 removed the failing query from the requirement. The population here is the whole twenty and the runner has no mechanism for removing one."
+  }
+}

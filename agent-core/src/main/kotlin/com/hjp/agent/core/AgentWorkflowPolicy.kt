@@ -593,9 +593,10 @@ class AgentWorkflowSession internal constructor(
     fun deterministicComposePrerequisiteCall(): ModelToolCall? {
         if (!composeIntent || !hasExplicitComposeExecution() || !trustedSessionContactTarget) return null
         val cardId = searchResultIds?.singleOrNull()?.takeIf(String::isNotBlank) ?: return null
-        if (selectedContactPurpose == "email" && selectedContact?.string("card_id") == cardId &&
-            selectedContact?.string("email")?.let(::isValidEmail) == true
-        ) return null
+        // The read is complete even when the card proves that no usable address exists. Retrying
+        // the same get_contact can never manufacture an address and only trips duplicate-call
+        // protection after the gateway has already produced the correct missing-field answer.
+        if (selectedContactPurpose == "email" && selectedContact?.string("card_id") == cardId) return null
         return ModelToolCall(
             callId = "policy-compose-prerequisite",
             modelToolName = GET_CONTACT,

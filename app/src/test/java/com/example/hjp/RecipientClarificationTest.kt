@@ -131,13 +131,6 @@ class RecipientClarificationTest {
     // ---- missing field, false completion, idempotency ---------------------------------------------
 
     @Test
-    @org.junit.Ignore(
-        "이메일이 없는 명함에 메일을 쓰라고 하면 get_contact 로 확인한 뒤 '이메일 주소 정보가 없습니다'" +
-        "라고 **바르게 답한다**. 그런데 AgentWorkflowPolicy 가 그 턴을 미완으로 보고 재촉을 보내고, " +
-        "같은 답을 다시 내면 루프 방지에 걸려 '동일한 결정이 반복되어 안전하게 중단했습니다'로 끝난다. " +
-        "정책의 unresolvedActionTarget()/contactLookupTerminal() 이 이 경우를 이미 설명하고 있으므로 " +
-        "판정이 어디서 어긋나는지 정책 쪽에서 봐야 한다 — Agent_0910 자체 문제다."
-    )
     fun `a card with no address says so instead of pretending it can send`() = runBlocking {
         val h = harness(noEmail)
         h.turn("최영희 명함 찾아줘.")
