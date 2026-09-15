@@ -31,7 +31,7 @@ class RequiredModelsInstrumentedTest {
         assertTrue("det/rec OCR 모델 또는 OpenCV를 로드하지 못했습니다", ocr != null)
         ocr!!.use {
             assertEquals("KIE 모델/토크나이저가 로드되지 않았습니다", "MiniLM KIE", it.fieldClassifier)
-            assertTrue("textline_ori 모델이 로드되지 않았습니다", it.textLineOrientationEnabled)
+            assertTrue("textline_ori 모델이 로드되지 않았습니다", it.textLineOrientationModelLoaded)
         }
 
         AndroidEmbeddingGemmaEngine(application).use { embedding ->

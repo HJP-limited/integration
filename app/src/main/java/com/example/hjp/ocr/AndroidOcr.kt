@@ -31,7 +31,7 @@ class AndroidOcr private constructor(
     private val kie: KieParser,
 ) : AutoCloseable {
     val fieldClassifier: String = "MiniLM KIE"
-    val textLineOrientationEnabled: Boolean get() = pipeline.textLineOrientationEnabled
+    val textLineOrientationModelLoaded: Boolean get() = pipeline.textLineOrientationModelLoaded
     private var closed = false
 
     @Synchronized
@@ -79,7 +79,7 @@ class AndroidOcr private constructor(
             }
             var transferred = false
             try {
-                if (!pipeline.textLineOrientationEnabled) return null
+                if (!pipeline.textLineOrientationModelLoaded) return null
                 val kie = KieParser.createOrNull(assets) ?: return null
                 return AndroidOcr(pipeline, kie).also { transferred = true }
             } finally {

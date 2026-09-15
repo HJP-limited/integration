@@ -2,10 +2,8 @@ package com.example.hjp.ui
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Matrix
 import android.graphics.Path
 import android.graphics.Paint
 import android.net.Uri
@@ -36,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,10 +47,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import androidx.exifinterface.media.ExifInterface
 import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.DebugImage
 import com.example.hjp.ocr.AndroidOcr
+import com.example.hjp.ocr.OcrImageLoader
 import com.example.hjp.ocr.CardParser
 import com.example.hjp.ocr.OcrPipeline
 import com.example.hjp.ocr.OcrCardMapper
@@ -121,7 +120,29 @@ fun CaptureScreen(
 
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var pendingCapture by remember { mutableStateOf<Uri?>(null) }
+    var pendingCapture by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedImage by rememberSaveable { mutableStateOf<String?>(null) }
+    var quarterTurns by rememberSaveable { mutableStateOf(0) }
+    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    var decoding by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedImage, quarterTurns) {
+        preview = null
+        val address = selectedImage ?: return@LaunchedEffect
+        decoding = true
+        error = null
+        try {
+            preview = withContext(Dispatchers.IO) {
+                val original = OcrImageLoader.load(context, Uri.parse(address))
+                OcrImageLoader.rotateClockwise(original, quarterTurns).also {
+                    if (it !== original) original.recycle()
+                }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (failure: Exception) { error = failure.message ?: "사진을 읽을 수 없습니다." }
+        catch (failure: OutOfMemoryError) { error = "사진 처리 메모리가 부족합니다. 다른 앱을 닫고 다시 시도해 주세요." }
+        finally { decoding = false }
+    }
 
     fun recognize(bitmap: Bitmap) {
         val engine = ocr ?: return
@@ -148,14 +169,16 @@ fun CaptureScreen(
     }
 
     // 디버그 인텐트로 들어온 이미지를 태운다. 갤러리로 고른 것과 **같은 경로**다 —
-    // decodeBitmap 이 EXIF 를 보고 세운 뒤 인식으로 넘어간다.
+    // OcrImageLoader가 EXIF를 처리한다. 수동 회전 없는 기본 입력을 검증하는 경로다.
     // 키에 pending 을 넣는다 — 이게 없으면 이미 떠 있는 화면에 새 인텐트가 들어와도
     // 효과가 다시 돌지 않아 조용히 무시된다(에뮬레이터에서 실제로 그랬다).
     LaunchedEffect(DebugImage.pending, ocr, busy) {
         val path = DebugImage.pending
         if (path != null && ocr != null && !busy) {
             DebugImage.consume()
-            val bitmap = decodeBitmap(context, Uri.fromFile(File(path)))
+            val bitmap = withContext(Dispatchers.IO) {
+                runCatching { OcrImageLoader.load(context, Uri.fromFile(File(path))) }.getOrNull()
+            }
             if (bitmap != null) {
                 android.util.Log.i(
                     "HJP",
@@ -171,7 +194,7 @@ fun CaptureScreen(
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
-        uri?.let { decodeBitmap(context, it)?.let(::recognize) ?: run { error = "이미지를 열지 못했어요." } }
+        if (uri != null) { quarterTurns = 0; selectedImage = uri.toString() }
     }
 
     val takePicture = rememberLauncherForActivityResult(
@@ -180,7 +203,8 @@ fun CaptureScreen(
         val uri = pendingCapture
         pendingCapture = null
         if (ok && uri != null) {
-            decodeBitmap(context, uri)?.let(::recognize) ?: run { error = "촬영 결과를 열지 못했어요." }
+            quarterTurns = 0
+            selectedImage = uri
         }
     }
 
@@ -193,6 +217,19 @@ fun CaptureScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         ScreenHeader("명함 촬영", "카메라 또는 갤러리에서 명함을 가져옵니다")
+
+        if (selectedImage != null) {
+            preview?.let { bitmap ->
+                Image(bitmap.asImageBitmap(), "인식 전 사진 방향 확인", contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().height(260.dp))
+            }
+            Text("글자가 똑바로 보이는지 확인하세요. 이 사진 그대로 인식하고 결과에도 표시합니다.")
+            SecondaryButton(text = "오른쪽으로 90° 회전", enabled = !busy && !decoding,
+                onClick = { quarterTurns = (quarterTurns + 1) % 4 })
+            PrimaryButton(text = if (busy) "인식 중…" else "이 방향으로 인식", icon = HjpIcons.CHECK,
+                enabled = preview != null && !busy && !decoding && ocr != null,
+                onClick = { preview?.let(::recognize) })
+        }
 
         // 목업의 가이드 프레임. 실제 뷰파인더 대신 촬영 안내 역할을 한다.
         Box(
@@ -240,7 +277,7 @@ fun CaptureScreen(
             enabled = ready,
         ) {
             val uri = newCaptureUri(context)
-            pendingCapture = uri
+            pendingCapture = uri.toString()
             takePicture.launch(uri)
         }
         SecondaryButton(
@@ -380,40 +417,6 @@ private fun newCaptureUri(context: Context): Uri {
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
 
-/**
- * 이미지를 읽어 **똑바로 세워서** 돌려준다.
- *
- * 카메라는 폰을 어떻게 들고 찍었든 센서 방향 그대로 저장하고, "보여 줄 때 이만큼 돌려라"를
- * EXIF Orientation 태그로만 남긴다. `BitmapFactory` 는 그 태그를 보지 않으므로, 갤러리에서는
- * 똑바로 보이는 사진이 여기서는 90도 누운 채로 들어온다.
- *
- * 이게 화면만의 문제가 아닌 이유: 이 비트맵이 그대로 OCR 로 들어간다. 누운 한글을 인식시키면
- * 검출은 되는데 글자가 엉킨다. 읽는 자리에서 바로 세우는 게 맞다 — 인식과 미리보기가 같은
- * 비트맵을 쓰므로 한 번만 세우면 둘 다 맞는다.
- */
-private fun decodeBitmap(context: Context, uri: Uri): Bitmap? =
-    try {
-        // 먼저 크기만 읽어 몇 분의 1 로 줄여 받을지 정한다. 요즘 폰 카메라는 5000만 화소라
-        // 원본 그대로 펼치면 한 장에 200MB 가까이 쓴다 — 앱이 OutOfMemory 로 죽는다.
-        // 검출기가 어차피 긴 변 960 으로 줄이므로 2000 이면 인식 품질에 손해가 없다.
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri).use { input ->
-            BitmapFactory.decodeStream(input, null, bounds)
-        }
-        var sample = 1
-        while (max(bounds.outWidth, bounds.outHeight) / sample > MAX_DECODED_SIDE) sample *= 2
-
-        val decoded = context.contentResolver.openInputStream(uri).use { input ->
-            // ARGB_8888 로 강제한다 — OpenCV 의 bitmapToMat 이 하드웨어 비트맵을 못 읽는다.
-            BitmapFactory.decodeStream(input, null, BitmapFactory.Options().apply {
-                inSampleSize = sample
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-            })
-        }
-        decoded?.let { uprightByExif(context, uri, it) }
-    } catch (_: Throwable) {
-        null
-    }
 
 /**
  * 검출된 글줄을 원본 위에 그려 준다.
@@ -453,42 +456,4 @@ private fun drawDetections(src: Bitmap, regions: List<OcrPipeline.Region>): Bitm
         canvas.drawPath(path, stroke)
     }
     return out
-}
-
-/** 이보다 긴 변은 반씩 줄여 받는다. 원본 App 트랙과 같은 값이다. */
-private const val MAX_DECODED_SIDE = 2000
-
-/**
- * EXIF 태그가 시키는 대로 회전·반전한다. 태그가 없거나 읽지 못하면 원본을 그대로 돌려준다 —
- * 방향을 짐작해서 돌리면 멀쩡한 사진을 눕히게 된다.
- */
-private fun uprightByExif(context: Context, uri: Uri, bitmap: Bitmap): Bitmap {
-    val orientation = try {
-        context.contentResolver.openInputStream(uri).use { input ->
-            input?.let { ExifInterface(it).getAttributeInt(
-                ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
-        }
-    } catch (_: Throwable) {
-        null
-    } ?: return bitmap
-
-    val matrix = Matrix()
-    when (orientation) {
-        ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
-        ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
-        // 전치(transpose)/역전치(transverse): 대각선 반사. 회전 + 좌우반전으로 같아진다.
-        ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.postScale(-1f, 1f) }
-        ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(270f); matrix.postScale(-1f, 1f) }
-        else -> return bitmap
-    }
-    return try {
-        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-            .also { if (it !== bitmap) bitmap.recycle() }
-    } catch (_: OutOfMemoryError) {
-        // 큰 사진이면 회전 사본을 못 만들 수 있다. 누운 사진이라도 없는 것보다 낫다.
-        bitmap
-    }
 }

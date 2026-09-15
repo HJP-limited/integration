@@ -242,7 +242,7 @@ fun HjpApp(
     directory: CardDirectory,
 ) {
     // Local-only service: no simulated account/login screen. Model setup precedes entry.
-    var selectedTab by remember { mutableStateOf(AppTab.Home) }
+    var selectedTab by rememberSaveable { mutableStateOf(AppTab.Home) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     // 디버그 인텐트로 질문이 들어오면 Agent 화면으로 옮긴다 — 그 화면이 떠 있어야
     // 질문이 처리된다(adb 로 탭을 누르는 건 기기에서 잘 안 먹혔다).

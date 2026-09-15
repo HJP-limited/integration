@@ -1,8 +1,14 @@
-package com.example.hjp.ocr
+// Frozen upstream 010d3b1. Adaptations: package, APK asset prefix, resource close.
+package com.example.hjp.referenceocr
+
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.PointF
+import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
@@ -24,71 +30,33 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * PP-OCRv5 mobile det + korean rec ONNX 파이프라인.
+ * PP-OCRv5 mobile det + korean rec ONNX pipeline.
  *
- * `HJP/App/ref_pipeline.py` 의 이식본이다(PaddleOCR 대비 정합 검증 완료: 500장 GT
- * coverage 0.9480 vs 0.9494). **상수와 단계는 참조 구현과 1:1 이어야 한다** —
- * 바꿀 때는 ref_pipeline.py 를 먼저 고치고 정합을 다시 확인한 뒤 여기로 옮긴다.
- *
- * 입력을 안드로이드 Bitmap 이 아니라 OpenCV BGR [Mat] 으로 받는다. 이미지 타입만
- * 플랫폼이 변환해 주면 검출·인식 경로 전체가 폰과 노트북에서 같은 코드로 돈다.
+ * Direct port of HJP/App/ref_pipeline.py (parity-verified against PaddleOCR:
+ * GT coverage 0.9480 vs 0.9494 on the 500-card set). Every constant and stage
+ * mirrors the reference; change them there first, re-verify, then port.
  */
-class OcrPipeline(assets: OcrAssets) : AutoCloseable {
+class OcrPipeline(context: Context) : AutoCloseable {
+    override fun close() { det.close(); rec.close() }
 
-    /** 검출 박스 꼭짓점. 플랫폼 이미지 타입에 묶이지 않도록 자체 정의한다. */
-    data class Pt(val x: Float, val y: Float)
-
-    data class Region(val poly: List<Pt>, val text: String, val score: Float)
+    data class Region(val poly: List<PointF>, val text: String, val score: Float)
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val det: OrtSession
     private val rec: OrtSession
     private val charset: List<String>
 
-    /** Required compatibility asset. Original Android recognition does not apply this extra stage. */
-    private val textLineOrientation: TextLineOrientation?
-
-    /** Artifact load status, deliberately not a claim that an extra inference stage is enabled. */
-    val textLineOrientationModelLoaded: Boolean get() = textLineOrientation != null
-
     init {
-        val opened = mutableListOf<AutoCloseable>()
-        try {
-            val opts = OrtSession.SessionOptions()
-            try {
-                det = env.createSession(assets.require("det.onnx"), opts).also { opened.add(it) }
-                rec = env.createSession(assets.require("rec.onnx"), opts).also { opened.add(it) }
-            } finally {
-                opts.close()
-            }
-            // Keep the required artifact load gate, but do not inject a non-upstream inference stage.
-            textLineOrientation = TextLineOrientation.createOrNull(env, assets)?.also { opened.add(it) }
-                ?: error("Required OCR orientation model could not be loaded")
-            charset = buildList {
-                add("<blank>")
-                val dict = assets.text("korean_dict.txt")
-                    ?: throw IllegalStateException("OCR asset not found: korean_dict.txt")
-                // **끝의 빈 줄을 버린다.** 사전 파일이 개행으로 끝나는데 lineSequence() 는 그 뒤의
-                // 빈 문자열도 한 항목으로 내놓는다(파이썬 splitlines() 는 안 그런다). 그 한 칸이
-                // 공백 문자의 번호를 밀어내서, 인식된 공백이 전부 빈 문자열이 됐다 —
-                // "경기도 성남시 분당구" 가 "경기도성남시분당구" 로 저장됐고, FTS 는 공백에서
-                // 자르므로 주소가 통째로 낱말 하나가 됐다.
-                dict.lineSequence().forEach { line -> if (line.isNotEmpty()) add(line) }
-                // 마지막 항목이 공백이다. 인식기의 charset 은 blank + 사전 + 공백 순서다.
-                add(" ")
-            }
-        } catch (failure: Throwable) {
-            opened.asReversed().forEach { resource ->
-                runCatching { resource.close() }.exceptionOrNull()?.let(failure::addSuppressed)
-            }
-            throw failure
+        val opts = OrtSession.SessionOptions()
+        det = env.createSession(context.assets.open("ocr/det.onnx").readBytes(), opts)
+        rec = env.createSession(context.assets.open("ocr/rec.onnx").readBytes(), opts)
+        opts.close()
+        charset = buildList {
+            add("<blank>")
+            context.assets.open("ocr/korean_dict.txt").bufferedReader(Charsets.UTF_8)
+                .forEachLine { add(it) }
+            add(" ")
         }
-    }
-
-    override fun close() {
-        textLineOrientation?.close()
-        rec.close()
-        det.close()
     }
 
     companion object {
@@ -106,8 +74,11 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
         private const val MAX_CANDIDATES = 1000
     }
 
-    /** [bgr] 은 BGR 3채널 Mat. 호출부가 소유하며 여기서 해제하지 않는다. */
-    fun run(bgr: Mat): List<Region> {
+    fun run(bitmap: Bitmap): List<Region> {
+        val bgr = Mat()
+        Utils.bitmapToMat(bitmap, bgr)                    // RGBA
+        Imgproc.cvtColor(bgr, bgr, Imgproc.COLOR_RGBA2BGR)
+
         val origH = bgr.rows()
         val origW = bgr.cols()
 
@@ -137,10 +108,8 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
 
         // ---- det inference ----
         val prob: FloatArray
-        OnnxTensor.createTensor(
-            env, FloatBuffer.wrap(chw),
-            longArrayOf(1, 3, rh.toLong(), rw.toLong())
-        ).use { input ->
+        OnnxTensor.createTensor(env, FloatBuffer.wrap(chw),
+            longArrayOf(1, 3, rh.toLong(), rw.toLong())).use { input ->
             det.run(mapOf("x" to input)).use { out ->
                 val t = out[0] as OnnxTensor
                 prob = FloatArray(rh * rw)
@@ -158,10 +127,8 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
             binary.put(0, 0, bytes)
         }
         val contours = ArrayList<MatOfPoint>()
-        Imgproc.findContours(
-            binary, contours, Mat(), Imgproc.RETR_LIST,
-            Imgproc.CHAIN_APPROX_SIMPLE
-        )
+        Imgproc.findContours(binary, contours, Mat(), Imgproc.RETR_LIST,
+            Imgproc.CHAIN_APPROX_SIMPLE)
 
         val ratioH = rh.toDouble() / origH
         val ratioW = rw.toDouble() / origW
@@ -179,10 +146,8 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
             val perimeter = 2 * (rect.size.width + rect.size.height)
             if (perimeter <= 0) continue
             val d = area * DET_UNCLIP_RATIO / perimeter
-            val expanded = RotatedRect(
-                rect.center,
-                Size(rect.size.width + 2 * d, rect.size.height + 2 * d), rect.angle
-            )
+            val expanded = RotatedRect(rect.center,
+                Size(rect.size.width + 2 * d, rect.size.height + 2 * d), rect.angle)
             if (min(expanded.size.width, expanded.size.height) < DET_MIN_SIZE_POST) continue
             val ebox = orderedBoxPoints(expanded)
             for (p in ebox) {
@@ -196,20 +161,16 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
         val regions = ArrayList<Region>()
         for ((box, detScore) in results) {
             val crop = cropQuad(bgr, box) ?: continue
-            // Exact upstream Android path: cropQuad -> recognize (no extra 0/180 classifier).
             val (text, recScore) = recognize(crop)
             crop.release()
             if (text.isEmpty()) continue
             val combined = sqrt(detScore * recScore).toFloat()
-            regions.add(
-                Region(
-                    box.map { Pt(it.x.toFloat(), it.y.toFloat()) },
-                    Postprocess.apply(text), combined
-                )
-            )
+            regions.add(Region(
+                box.map { PointF(it.x.toFloat(), it.y.toFloat()) },
+                Postprocess.apply(text), combined))
         }
 
-        probMat.release(); binary.release(); resized.release()
+        probMat.release(); binary.release(); resized.release(); bgr.release()
         return regions
     }
 
@@ -233,8 +194,7 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
         if (xmax <= xmin || ymax <= ymin) return 0.0
         val mask = Mat.zeros(ymax - ymin + 1, xmax - xmin + 1, CvType.CV_8UC1)
         val shifted = MatOfPoint(*box.map {
-            Point(it.x - xmin, it.y - ymin)
-        }.toTypedArray())
+            Point(it.x - xmin, it.y - ymin) }.toTypedArray())
         Imgproc.fillPoly(mask, listOf(shifted), Scalar(1.0))
         val region = probMat.submat(Rect(xmin, ymin, xmax - xmin + 1, ymax - ymin + 1))
         val mean = Core.mean(region, mask).`val`[0]
@@ -290,10 +250,8 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
 
         val outShape: LongArray
         val logits: FloatArray
-        OnnxTensor.createTensor(
-            env, FloatBuffer.wrap(chw),
-            longArrayOf(1, 3, REC_H.toLong(), imgW.toLong())
-        ).use { input ->
+        OnnxTensor.createTensor(env, FloatBuffer.wrap(chw),
+            longArrayOf(1, 3, REC_H.toLong(), imgW.toLong())).use { input ->
             rec.run(mapOf("x" to input)).use { out ->
                 val t = out[0] as OnnxTensor
                 outShape = t.info.shape // [1, T, C]
