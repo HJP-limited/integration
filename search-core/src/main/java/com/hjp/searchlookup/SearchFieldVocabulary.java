@@ -53,6 +53,7 @@ final class SearchFieldVocabulary {
      * number is the one kind of wrong answer that looks right.
      */
     final Set<String> departmentTerms;
+    final Set<String> companyTerms;
 
     /** Words this repository uses for people, employers, jobs and departments. */
     final Set<String> nonLocationTerms;
@@ -72,7 +73,7 @@ final class SearchFieldVocabulary {
     private SearchFieldVocabulary(Set<String> administrativeLocations, Set<String> locationTerms,
             Set<String> titleTerms, Set<String> nonLocationTerms, List<String> locationHaystacks,
             Set<String> personNames, Set<String> surnames, Set<String> givenNames,
-            Set<String> departmentTerms) {
+            Set<String> departmentTerms, Set<String> companyTerms) {
         this.administrativeLocations = Collections.unmodifiableSet(administrativeLocations);
         this.locationTerms = Collections.unmodifiableSet(locationTerms);
         this.titleTerms = Collections.unmodifiableSet(titleTerms);
@@ -82,6 +83,7 @@ final class SearchFieldVocabulary {
         this.surnames = Collections.unmodifiableSet(surnames);
         this.givenNames = Collections.unmodifiableSet(givenNames);
         this.departmentTerms = Collections.unmodifiableSet(departmentTerms);
+        this.companyTerms = Collections.unmodifiableSet(companyTerms);
     }
 
     /**
@@ -103,6 +105,10 @@ final class SearchFieldVocabulary {
         return raw.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
     }
 
+    static String normalizeCompany(String raw) {
+        return normalize(raw).replaceFirst("^(?:\\(주\\)|㈜|주식회사)\\s*", "").trim();
+    }
+
     /** Is anybody in this repository actually working at the named place? */
     boolean someoneWorksIn(String locationTerm) {
         if (locationTerm == null || locationTerm.isEmpty()) return false;
@@ -120,6 +126,7 @@ final class SearchFieldVocabulary {
         List<String> haystacks = new ArrayList<>();
         Set<String> names = new LinkedHashSet<>();
         Set<String> departments = new LinkedHashSet<>();
+        Set<String> companies = new LinkedHashSet<>();
 
         for (BusinessCard card : cards) {
             if (card == null) continue;
@@ -156,6 +163,8 @@ final class SearchFieldVocabulary {
             for (String word : words(card.name)) nonLocations.add(word);
             for (String word : words(card.nameEn)) nonLocations.add(word);
             for (String word : words(card.company)) nonLocations.add(word);
+            String company = normalizeCompany(card.company);
+            if (company.length() >= 2) companies.add(company);
             String department = normalize(card.department);
             if (!department.isEmpty()) departments.add(department);
             for (String word : words(card.department)) {
@@ -178,7 +187,7 @@ final class SearchFieldVocabulary {
             }
         }
         return new SearchFieldVocabulary(administrative, locations, titles, nonLocations, haystacks,
-                names, surnames, givenNames, departments);
+                names, surnames, givenNames, departments, companies);
     }
 
     /**

@@ -9,6 +9,7 @@ import com.hjp.searchlookup.RetrievalMode
 import com.hjp.searchlookup.ScoreBreakdown
 import com.hjp.searchlookup.SearchLookupService
 import com.hjp.searchlookup.SearchPlanObserver
+import com.hjp.searchlookup.SearchPlanSnapshot
 import com.hjp.searchlookup.SearchResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +55,11 @@ class RyeongContactSearchBackend(
                     listOf(candidate.tier),
                 ).withRank(candidate.rank)
             }
-        val response = searchService.retrieve(query, limit, mode, indexedKeyword, searchPlanObserver)
+        var observedPlan: SearchPlanSnapshot? = null
+        val response = searchService.retrieve(query, limit, mode, indexedKeyword, SearchPlanObserver { plan ->
+            observedPlan = plan
+            searchPlanObserver.onSearchPlan(plan)
+        })
         val fallbackUsed = response.fallbackUsed || !state.modelBacked
         val fallbackReason = response.fallbackReason.ifBlank { state.fallbackReason }
         if (requireModelBacked && response.mode == RetrievalMode.KEYWORD_ONLY &&
@@ -102,6 +107,10 @@ class RyeongContactSearchBackend(
             fallbackReason = fallbackReason,
             engine = response.engineName,
             elapsedMillis = response.elapsedMillis,
+            appliedConstraints = observedPlan?.let { plan ->
+                AppliedSearchConstraints(plan.locations(), plan.titles(), plan.companies(), plan.departments(),
+                    plan.strictFilterApplied())
+            },
         )
     }
 

@@ -49,6 +49,7 @@ final class SearchFieldConstraintPlan {
      * exact unit, so a card outside it is not a weaker answer, it is a different question.
      */
     final List<String> departments;
+    final List<String> companies;
 
     /** Empty unless the plan already knows the answer is nobody. */
     final String abstainReason;
@@ -75,7 +76,15 @@ final class SearchFieldConstraintPlan {
     private SearchFieldConstraintPlan(List<String> locations, List<String> titles,
             List<String> departments, boolean locationRequested,
             boolean locationKnownToRepository, String abstainReason, boolean bareNameAbsent) {
+        this(locations, titles, departments, Collections.<String>emptyList(), locationRequested,
+                locationKnownToRepository, abstainReason, bareNameAbsent);
+    }
+
+    private SearchFieldConstraintPlan(List<String> locations, List<String> titles,
+            List<String> departments, List<String> companies, boolean locationRequested,
+            boolean locationKnownToRepository, String abstainReason, boolean bareNameAbsent) {
         this.departments = Collections.unmodifiableList(new ArrayList<>(departments));
+        this.companies = Collections.unmodifiableList(new ArrayList<>(companies));
         this.locations = Collections.unmodifiableList(new ArrayList<>(locations));
         this.titles = Collections.unmodifiableList(new ArrayList<>(titles));
         this.locationRequested = locationRequested;
@@ -98,18 +107,25 @@ final class SearchFieldConstraintPlan {
     static SearchFieldConstraintPlan of(List<String> locations, List<String> titles,
             List<String> departments, boolean locationKnownToRepository, String abstainReason,
             boolean bareNameAbsent) {
-        if (locations.isEmpty() && titles.isEmpty() && departments.isEmpty()
+        return of(locations, titles, departments, Collections.<String>emptyList(),
+                locationKnownToRepository, abstainReason, bareNameAbsent);
+    }
+
+    static SearchFieldConstraintPlan of(List<String> locations, List<String> titles,
+            List<String> departments, List<String> companies, boolean locationKnownToRepository,
+            String abstainReason, boolean bareNameAbsent) {
+        if (locations.isEmpty() && titles.isEmpty() && departments.isEmpty() && companies.isEmpty()
                 && (abstainReason == null || abstainReason.isEmpty()) && !bareNameAbsent) {
             return NONE;
         }
-        return new SearchFieldConstraintPlan(locations, titles, departments, !locations.isEmpty(),
+        return new SearchFieldConstraintPlan(locations, titles, departments, companies, !locations.isEmpty(),
                 locationKnownToRepository, abstainReason, bareNameAbsent);
     }
 
     /** The same plan, now certain the answer is nobody. */
     SearchFieldConstraintPlan abstaining(String reason) {
         if (abstains()) return this;
-        return new SearchFieldConstraintPlan(locations, titles, departments, locationRequested,
+        return new SearchFieldConstraintPlan(locations, titles, departments, companies, locationRequested,
                 locationKnownToRepository, reason, bareNameAbsent);
     }
 
@@ -135,7 +151,7 @@ final class SearchFieldConstraintPlan {
     boolean constrainsNothing() {
         // An abstention constrains everything, even with no field named: "정하은 명함" resolves no
         // location and no title, yet the answer is already known to be nobody.
-        return locations.isEmpty() && titles.isEmpty() && departments.isEmpty()
+        return locations.isEmpty() && titles.isEmpty() && departments.isEmpty() && companies.isEmpty()
                 && !abstains() && !bareNameAbsent;
     }
 

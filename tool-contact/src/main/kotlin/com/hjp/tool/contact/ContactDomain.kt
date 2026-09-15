@@ -80,6 +80,16 @@ data class ContactSearchResponse(
     val fallbackReason: String,
     val engine: String,
     val elapsedMillis: Long,
+    val appliedConstraints: AppliedSearchConstraints? = null,
+)
+
+/** Observed after retrieval, not inferred by re-parsing the user's query. */
+data class AppliedSearchConstraints(
+    val locations: List<String>,
+    val titles: List<String>,
+    val companies: List<String>,
+    val departments: List<String>,
+    val strictFilterApplied: Boolean,
 )
 
 interface ContactSearchBackend {

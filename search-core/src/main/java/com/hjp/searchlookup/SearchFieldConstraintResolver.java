@@ -84,6 +84,7 @@ final class SearchFieldConstraintResolver {
         List<String> locations = new ArrayList<>();
         List<String> titles = new ArrayList<>();
         List<String> departments = new ArrayList<>();
+        List<String> companies = namedCompanies(analysis, vocabulary);
         boolean namedRealPerson = false;
         boolean namedAbsentPersonWithHonorific = false;
         boolean namedAbsentBareName = false;
@@ -91,6 +92,8 @@ final class SearchFieldConstraintResolver {
         for (String rawToken : analysis.tokens) {
             String token = SearchFieldVocabulary.normalize(rawToken);
             if (token.length() < 2) continue;
+            // A verified employer token must not be reinterpreted as an absent person's name.
+            if (companies.contains(token)) continue;
             // A word the cards use as a job is a job, even when it doubles as a district.
             if (vocabulary.titleTerms.contains(token)) {
                 addDistinct(titles, token);
@@ -142,12 +145,37 @@ final class SearchFieldConstraintResolver {
         // SearchLookupService, which is the first place that knows.
         boolean bareNameAbsent = namedAbsentBareName && !namedRealPerson && abstainReason.isEmpty();
 
-        if (locations.isEmpty() && titles.isEmpty() && departments.isEmpty()
+        if (locations.isEmpty() && titles.isEmpty() && departments.isEmpty() && companies.isEmpty()
                 && abstainReason.isEmpty() && !bareNameAbsent) {
             return SearchFieldConstraintPlan.NONE;
         }
         return SearchFieldConstraintPlan.of(
-                locations, titles, departments, known, abstainReason, bareNameAbsent);
+                locations, titles, departments, companies, known, abstainReason, bareNameAbsent);
+    }
+
+    private static List<String> namedCompanies(QueryAnalysis analysis, SearchFieldVocabulary vocabulary) {
+        List<String> employers = new ArrayList<>(vocabulary.companyTerms);
+        employers.sort((a, b) -> Integer.compare(b.length(), a.length()));
+        List<String> found = new ArrayList<>();
+        List<int[]> spans = new ArrayList<>();
+        for (String employer : employers) {
+            // Do not turn a bare city/job/person into an employer constraint just because an
+            // unusually named company shares it. Those ambiguous forms need explicit resolution.
+            if (vocabulary.locationTerms.contains(employer) || vocabulary.titleTerms.contains(employer)
+                    || vocabulary.personNames.contains(employer) || vocabulary.departmentTerms.contains(employer)) continue;
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                    "(?<![\\p{L}\\p{N}])" + java.util.regex.Pattern.quote(employer)
+                    + "(?:에서|의|에|은|는|과|와)?(?![\\p{L}\\p{N}])").matcher(analysis.normalizedQuery);
+            while (matcher.find()) {
+                boolean overlaps = false;
+                for (int[] span : spans) if (matcher.start() < span[1] && matcher.end() > span[0]) overlaps = true;
+                if (!overlaps) {
+                    addDistinct(found, employer);
+                    spans.add(new int[] {matcher.start(), matcher.end()});
+                }
+            }
+        }
+        return found;
     }
 
     /** How confidently a token points at a person. */

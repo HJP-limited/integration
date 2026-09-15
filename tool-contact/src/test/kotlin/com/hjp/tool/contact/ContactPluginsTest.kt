@@ -16,6 +16,21 @@ import org.junit.Test
 
 class ContactPluginsTest {
     @Test
+    fun `applied organization constraints survive the production adapter boundary`() = runBlocking {
+        val repository = EmbeddingFixtureRepository(listOf(
+            BusinessCardRecord("r1", "서하늘", company = "한빛테크", department = "연구팀"),
+            BusinessCardRecord("r2", "최누리", company = "다른회사", department = "연구팀", memo = "한빛테크 협업"),
+        ))
+        val backend = RyeongContactSearchBackend(repository,
+            searchPlanObserver = com.hjp.searchlookup.SearchPlanObserver { error("observer failure") })
+        val result = backend.search("한빛테크 연구팀", 5)
+        assertEquals(listOf("r1"), result.hits.map { it.card.id })
+        assertEquals(listOf("한빛테크"), result.appliedConstraints!!.companies)
+        assertEquals(listOf("연구팀"), result.appliedConstraints!!.departments)
+        assertTrue(result.appliedConstraints!!.strictFilterApplied)
+    }
+
+    @Test
     fun `search result omits phone and email while get returns detail`() = runBlocking {
         val card = BusinessCardRecord("C001", "김지원", company = "비전글로벌", title = "대표",
             industry = "finance", location = "서울", phone = "010-0000", email = "test@example.com", tags = listOf("투자"))

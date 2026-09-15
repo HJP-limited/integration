@@ -46,12 +46,14 @@ class CurrentMultiturn165InstrumentedTest {
         val countersBefore = container.runtimeCounters.snapshot()
         var executed = 0
         var failed = 0
+        var retrievalScored = 0
+        var retrievalUnscored = 0
         report.bufferedWriter().use { writer ->
             writer.appendLine(JSONObject().put("type", "run_start")
                 .put("suite_id", suite.getString("suite_id"))
                 .put("generator_sha256", suite.getString("generator_sha256"))
                 .put("expected_cards_sha256", suite.getString("cards_sha256"))
-                .put("scoring", "all-turn completion and original answer checklist; legacy route/JGA/retrieval/UI no_cards not scored")
+                .put("scoring", "answer checklist; observed search Hit@5/Recall@5/MRR; direct-read gold membership; legacy route/JGA/UI not scored")
                 .put("scenarios", 165).put("turns", 435).toString())
             writer.flush()
             try {
@@ -94,14 +96,39 @@ class CurrentMultiturn165InstrumentedTest {
                             problems += "forbidden_answer:$it"
                         }
                         val displayed = container.contactBackend.lastHits.map { it.id }
+                        val readIds = container.contactBackend.lastReadCardIds
+                        val retrieval = MultiturnRetrievalEvaluation.evaluate(
+                            turn.optJSONArray("gold").strings(), container.contactBackend.searchPerformed, displayed, readIds,
+                        )
+                        problems += retrieval.failures
+                        val applied = container.contactBackend.lastAppliedConstraints
+                        val slotEvaluation = MultiturnConstraintEvaluation.evaluate(turn.optJSONObject("slots"), applied)
+                        problems += slotEvaluation.failures
+                        if (retrieval.basis == "search" || retrieval.basis == "direct_read") retrievalScored++
+                        if (retrieval.coverageGap != null) retrievalUnscored++
                         val memory = container.sessionSnapshot().conversationMemory
-                        val action = memory.actions.lastOrNull()
+                        val currentTurnId = events.filterIsInstance<AgentEvent.TurnStarted>().lastOrNull()?.turnId
+                        val action = currentTurnId?.let(memory::action)
                         executed++
                         if (problems.isNotEmpty()) failed++
                         writer.appendLine(JSONObject().put("type", "turn")
                             .put("scenario", scenarioIndex).put("turn", turnIndex)
                             .put("kind", scenario.getString("kind")).put("expected", turn)
                             .put("answer", answer).put("search_hit_card_ids", JSONArray(displayed))
+                            .put("read_card_ids", JSONArray(readIds))
+                            .put("applied_search_constraints", applied?.let { constraints ->
+                                JSONObject().put("locations", JSONArray(constraints.locations))
+                                    .put("titles", JSONArray(constraints.titles))
+                                    .put("companies", JSONArray(constraints.companies))
+                                    .put("departments", JSONArray(constraints.departments))
+                                    .put("strict_filter_applied", constraints.strictFilterApplied)
+                            } ?: JSONObject.NULL)
+                            .put("unscored_slot_axes", JSONArray(slotEvaluation.unscoredAxes))
+                            .put("retrieval", JSONObject().put("basis", retrieval.basis)
+                                .put("hit_at_5", retrieval.hitAt5 ?: JSONObject.NULL)
+                                .put("recall_at_5", retrieval.recallAt5 ?: JSONObject.NULL)
+                                .put("reciprocal_rank", retrieval.reciprocalRank ?: JSONObject.NULL)
+                                .put("coverage_gap", retrieval.coverageGap ?: JSONObject.NULL))
                             .put("selected_card_id", memory.selectedContact?.cardId ?: JSONObject.NULL)
                             .put("candidate_card_ids", JSONArray(memory.candidateContacts.map { it.cardId }))
                             .put("executed_tools", JSONArray(action?.executedTools.orEmpty()))
@@ -117,7 +144,9 @@ class CurrentMultiturn165InstrumentedTest {
                 }
             } finally {
                 writer.appendLine(JSONObject().put("type", "run_end").put("executed", executed)
-                    .put("failed", failed).put("complete", executed == 435).toString())
+                    .put("failed", failed).put("complete", executed == 435)
+                    .put("retrieval_scored_turns", retrievalScored).put("retrieval_unscored_turns", retrievalUnscored)
+                    .put("all_quality_axes_evaluated", false).toString())
                 writer.flush()
                 container.resetSession()
             }

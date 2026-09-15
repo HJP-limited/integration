@@ -17,10 +17,7 @@ import java.util.List;
  *
  * <h2>What is and is not reported</h2>
  *
- * The location and title constraints are reported because the plan really holds them. Company and
- * department are reported as <em>not resolved</em>, with {@link #constraintSource} saying so,
- * because this search has no company or department constraint axis — inventing one here so that a
- * metric had something to score would be reporting a capability that does not exist. The query
+ * Location, title, company and department constraints are reported from the actual plan. The query
  * tokens are reported as the name/target constraint, because tokens are literally what the keyword
  * retriever matched against.
  */
@@ -29,13 +26,14 @@ public final class SearchPlanSnapshot {
     /** Where the constraints in this snapshot came from. Reported verbatim by the evaluator. */
     public static final String CONSTRAINT_SOURCE =
             "SearchFieldConstraintResolver.resolve(QueryAnalysis) as applied by "
-                    + "SearchLookupService.retrieve; company and department are not constraint axes "
-                    + "of this search and are reported as unresolved rather than inferred";
+                    + "SearchLookupService.retrieve; location/title/company/department are observed, not inferred";
 
     private final String query;
     private final List<String> queryTokens;
     private final List<String> locations;
     private final List<String> titles;
+    private final List<String> departments;
+    private final List<String> companies;
     private final boolean locationRequested;
     private final boolean locationKnownToRepository;
     private final boolean strictFilterApplied;
@@ -54,9 +52,11 @@ public final class SearchPlanSnapshot {
         this.queryTokens = copy(queryTokens);
         this.locations = plan == null ? Collections.<String>emptyList() : copy(plan.locations);
         this.titles = plan == null ? Collections.<String>emptyList() : copy(plan.titles);
+        this.departments = plan == null ? Collections.<String>emptyList() : copy(plan.departments);
+        this.companies = plan == null ? Collections.<String>emptyList() : copy(plan.companies);
         this.locationRequested = plan != null && plan.locationRequested;
         this.locationKnownToRepository = plan != null && plan.locationKnownToRepository;
-        this.strictFilterApplied = plan != null && plan.isStrict();
+        this.strictFilterApplied = plan != null && (plan.isStrict() || !plan.departments.isEmpty() || !plan.companies.isEmpty());
         this.abstained = plan != null && plan.abstains();
         this.abstainReason = plan == null ? "" : plan.abstainReason;
         this.retrievalMode = retrievalMode == null ? "" : retrievalMode.name();
@@ -84,11 +84,11 @@ public final class SearchPlanSnapshot {
     /** Job titles the query constrained. Alternatives, not requirements. */
     public List<String> titles() { return titles; }
 
-    /** Companies the query constrained. Always empty: this search has no company constraint axis. */
-    public List<String> companies() { return Collections.emptyList(); }
+    /** Complete known employer names actually constrained (not company words appearing in memos). */
+    public List<String> companies() { return companies; }
 
-    /** Departments constrained. Always empty: this search has no department constraint axis. */
-    public List<String> departments() { return Collections.emptyList(); }
+    /** Departments actually constrained, including requests without a location. */
+    public List<String> departments() { return departments; }
 
     /** Whether the query named a place at all. */
     public boolean locationRequested() { return locationRequested; }

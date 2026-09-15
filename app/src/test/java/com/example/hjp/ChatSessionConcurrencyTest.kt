@@ -120,6 +120,39 @@ class ChatSessionConcurrencyTest {
         assertEquals(listOf("chat-result"), chatRecorder.lastHits.map { it.id })
     }
 
+    @Test fun `successful direct reads are recorded separately from search and cleared per turn`() = runTest(dispatcher) {
+        val recording = RecordingContactSearchBackend(object : EmptyBackend() {
+            override suspend fun get(cardId: String) = BusinessCardRecord(cardId, cardId)
+        })
+        recording.get("a")
+        recording.get("a")
+        assertFalse(recording.searchPerformed)
+        assertEquals(listOf("a"), recording.lastReadCardIds)
+        assertTrue(recording.lastHits.isEmpty())
+        recording.search("b", 5)
+        assertTrue(recording.searchPerformed)
+        assertEquals(listOf("a"), recording.lastReadCardIds)
+        recording.clear()
+        assertFalse(recording.searchPerformed)
+        assertTrue(recording.lastReadCardIds.isEmpty())
+    }
+
+    @Test fun `a late direct read cannot supply evidence to the next turn`() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        val recording = RecordingContactSearchBackend(object : EmptyBackend() {
+            override suspend fun get(cardId: String): BusinessCardRecord {
+                gate.await()
+                return BusinessCardRecord(cardId, cardId)
+            }
+        })
+        val oldRead = launch { recording.get("old") }
+        runCurrent()
+        recording.clear()
+        gate.complete(Unit)
+        oldRead.join()
+        assertTrue(recording.lastReadCardIds.isEmpty())
+    }
+
     private class Host : ChatSessionHost {
         val questions = mutableListOf<String>()
         var turn: (String) -> Flow<AgentEvent> = { flowOf(AgentEvent.FinalMessage("답변")) }

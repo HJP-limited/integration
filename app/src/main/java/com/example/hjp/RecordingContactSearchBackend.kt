@@ -3,6 +3,7 @@ package com.example.hjp
 import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.ContactSearchBackend
 import com.hjp.tool.contact.ContactSearchResponse
+import com.hjp.tool.contact.AppliedSearchConstraints
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -19,9 +20,18 @@ class RecordingContactSearchBackend(
     private val delegate: ContactSearchBackend,
 ) : ContactSearchBackend by delegate {
 
-    private data class Recorded(val generation: Long, val hits: List<BusinessCardRecord>)
+    private data class Recorded(
+        val generation: Long,
+        val hits: List<BusinessCardRecord>,
+        val searched: Boolean = false,
+        val readIds: List<String> = emptyList(),
+        val constraints: AppliedSearchConstraints? = null,
+    )
     private val recorded = AtomicReference(Recorded(0, emptyList()))
     val lastHits: List<BusinessCardRecord> get() = recorded.get().hits
+    val searchPerformed: Boolean get() = recorded.get().searched
+    val lastReadCardIds: List<String> get() = recorded.get().readIds
+    val lastAppliedConstraints: AppliedSearchConstraints? get() = recorded.get().constraints
 
     /** 턴을 시작할 때 비운다. 안 비우면 검색을 안 한 턴이 앞 턴의 카드를 물려받는다. */
     fun clear() {
@@ -33,8 +43,19 @@ class RecordingContactSearchBackend(
         val response = delegate.search(query, limit)
         val hits = response.hits.map { it.card }
         recorded.updateAndGet { current ->
-            if (current.generation == generation) Recorded(generation, hits) else current
+            if (current.generation == generation) current.copy(hits = hits, searched = true,
+                constraints = response.appliedConstraints) else current
         }
         return response
+    }
+
+    override suspend fun get(cardId: String): BusinessCardRecord? {
+        val generation = recorded.get().generation
+        val card = delegate.get(cardId)
+        if (card != null) recorded.updateAndGet { current ->
+            if (current.generation == generation) current.copy(readIds = (current.readIds + card.id).distinct())
+            else current
+        }
+        return card
     }
 }

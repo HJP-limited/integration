@@ -31,6 +31,10 @@ final class SearchFieldConstraintMatcher {
         if (card == null) return false;
         if (plan == null || plan.constrainsNothing()) return true;
 
+        if (!plan.companies.isEmpty() && !plan.companies.contains(SearchFieldVocabulary.normalizeCompany(card.company))) {
+            return false;
+        }
+
         if (!plan.locations.isEmpty()) {
             // Where somebody works is what their location and address say. A company name, a memo
             // or a tag can mention a city for a hundred reasons — a head office, a client, a trip —
@@ -93,7 +97,17 @@ final class SearchFieldConstraintMatcher {
             // A job named on its own is a broader question than a job pinned to a place. Removing
             // everything but exact title matches would answer "변호사 있나?" by hiding the 고문변호사
             // sitting right there. Order instead: exact matches first, everything else as it was.
-            return plan.titles.isEmpty() ? candidates : exactTitlesFirst(candidates, plan);
+            // Organizational units are exact requirements even without a location. Keep the
+            // existing soft-title ordering, but only among cards in the requested department.
+            List<SearchResult> scoped = candidates;
+            if (!plan.departments.isEmpty() || !plan.companies.isEmpty()) {
+                scoped = new ArrayList<>();
+                for (SearchResult candidate : candidates) {
+                    if (candidate != null && matches(candidate.card, plan)) scoped.add(candidate);
+                }
+                scoped = Collections.unmodifiableList(scoped);
+            }
+            return plan.titles.isEmpty() ? scoped : exactTitlesFirst(scoped, plan);
         }
         List<SearchResult> kept = new ArrayList<>();
         for (SearchResult candidate : candidates) {
