@@ -18,6 +18,16 @@ $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 $env:ANDROID_HOME = "C:\Users\babie\AppData\Local\Android\Sdk"
 $adb = Join-Path $env:ANDROID_HOME "platform-tools\adb.exe"
 
+# Windows PowerShell 5.1 turns native stderr (including adb's successful push
+# summary) into ErrorRecords. Judge native commands by their exit code instead.
+function Invoke-AdbChecked {
+    $ErrorActionPreference = "Continue"
+    & $adb @args 2>&1 | ForEach-Object { $_.ToString() }
+    if ($LASTEXITCODE -ne 0) {
+        throw "ADB command failed (exit $LASTEXITCODE): $($args -join ' ')"
+    }
+}
+
 $deviceModelDir = "/sdcard/Android/data/com.example.hjp/files/models"
 
 # 온디바이스 모델(3.1GB)은 .gitignore 대상이라 저장소 안에 없다. 어디에 두든 상관없게
@@ -118,7 +128,7 @@ $connectedSerials = @(
 $physicalArm64Serials = @(
     $connectedSerials | Where-Object {
         if ($_ -like 'emulator-*') { return $false }
-        $abi = ([string](& $adb -s $_ shell getprop ro.product.cpu.abi)).Trim()
+        $abi = (@(& $adb -s $_ shell getprop ro.product.cpu.abi) -join '').Trim()
         return $abi -like 'arm64*'
     }
 )
@@ -156,17 +166,19 @@ foreach ($model in $models) {
     $remote = "$deviceModelDir/$name"
     # 새 설치에서는 원격 파일이 아직 없어서 stat 이 아무 출력도 내지 않는다. 명령 결과에
     # 바로 .Trim() 을 부르면 $null.Trim() 이 되어 첫 모델을 밀기도 전에 스크립트가 멈춘다.
-    $remoteSize = ([string](& $adb @adbTarget shell "stat -c %s '$remote' 2>/dev/null")).Trim()
+    $remoteSize = (@(& $adb @adbTarget shell "stat -c %s '$remote' 2>/dev/null") -join '').Trim()
 
     if (-not $ForceModels -and $remoteSize -eq "$localSize") {
         "건너뜀 (동일): $name  {0:N0} bytes" -f $localSize
     } else {
         "전송: $name  {0:N0} bytes" -f $localSize
-        & $adb @adbTarget push $path $remote
-        if ($LASTEXITCODE -ne 0) { throw "$name 전송 실패" }
+        Invoke-AdbChecked @adbTarget push $path $remote
     }
 
-    $remoteHashLine = ([string](& $adb @adbTarget shell "sha256sum '$remote' 2>/dev/null")).Trim()
+    $remoteHashLine = (@(& $adb @adbTarget shell "sha256sum '$remote' 2>/dev/null") -join '').Trim()
+    if ($LASTEXITCODE -ne 0 -or $remoteHashLine -notmatch '^[0-9a-fA-F]{64}\s') {
+        throw "Device model SHA-256 command failed: $name"
+    }
     $remoteHash = ($remoteHashLine -split '\s+')[0].ToLowerInvariant()
     if ($remoteHash -ne $model.Sha256) {
         throw "기기 모델 해시 불일치: $name expected=$($model.Sha256) actual=$remoteHash"
@@ -188,9 +200,9 @@ if ($RunMultiturn165) {
     Write-Host "현재 165개/435턴 전체 앱 재생을 실행합니다. 장시간이 걸리며 테스트 기기를 사용하세요."
 }
 $requiredTests = $requiredTests -join ','
-$testOutput = & $adb @adbTarget shell am instrument -w -r `
+$testOutput = Invoke-AdbChecked @adbTarget shell am instrument -w -r `
     -e class $requiredTests `
-    com.example.hjp.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+    com.example.hjp.test/androidx.test.runner.AndroidJUnitRunner
 $instrumentExit = $LASTEXITCODE
 $testOutput | Out-Host
 $evidenceExit = 0
