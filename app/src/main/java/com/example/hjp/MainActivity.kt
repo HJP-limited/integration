@@ -101,7 +101,7 @@ class MainActivity : ComponentActivity() {
         val container = (application as HjpApplication).container
         val directory = CardDirectory(
             container.contactRepository,
-            container.contactBackend,
+            container.directorySearchBackend,
             container::refreshAfterCardAdded,
         )
 

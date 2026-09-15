@@ -3,6 +3,7 @@ package com.example.hjp
 import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.ContactSearchBackend
 import com.hjp.tool.contact.ContactSearchResponse
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 도구가 실제로 찾아온 명함을 화면이 볼 수 있게 기록만 하는 껍데기.
@@ -18,18 +19,22 @@ class RecordingContactSearchBackend(
     private val delegate: ContactSearchBackend,
 ) : ContactSearchBackend by delegate {
 
-    @Volatile
-    var lastHits: List<BusinessCardRecord> = emptyList()
-        private set
+    private data class Recorded(val generation: Long, val hits: List<BusinessCardRecord>)
+    private val recorded = AtomicReference(Recorded(0, emptyList()))
+    val lastHits: List<BusinessCardRecord> get() = recorded.get().hits
 
     /** 턴을 시작할 때 비운다. 안 비우면 검색을 안 한 턴이 앞 턴의 카드를 물려받는다. */
     fun clear() {
-        lastHits = emptyList()
+        recorded.updateAndGet { Recorded(it.generation + 1, emptyList()) }
     }
 
     override suspend fun search(query: String, limit: Int): ContactSearchResponse {
+        val generation = recorded.get().generation
         val response = delegate.search(query, limit)
-        lastHits = response.hits.map { it.card }
+        val hits = response.hits.map { it.card }
+        recorded.updateAndGet { current ->
+            if (current.generation == generation) Recorded(generation, hits) else current
+        }
         return response
     }
 }

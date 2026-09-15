@@ -27,8 +27,7 @@ class KieParser private constructor(
 ) : AutoCloseable {
 
     override fun close() {
-        classifier.close()
-        tokenizer.close()
+        try { classifier.close() } finally { tokenizer.close() }
     }
 
     companion object {
@@ -42,8 +41,7 @@ class KieParser private constructor(
         /**
          * 자산이 다 있으면 만들고, 하나라도 없거나 로드에 실패하면 null.
          *
-         * KIE 모델(118MB)은 저장소에 커밋하지 않으므로 없을 수 있다. 그때는 호출부가
-         * [CardParser] 폴백으로 내려가야 하고, 여기서 예외를 던지면 촬영 자체가 죽는다.
+         * 통합앱은 null을 필수 모델 로드 실패로 처리해 인식을 차단한다.
          */
         fun createOrNull(assets: OcrAssets): KieParser? {
             val classifierBytes = assets.bytes(CLASSIFIER_ASSET) ?: return null
@@ -53,11 +51,14 @@ class KieParser private constructor(
             var classifier: OrtSession? = null
             return try {
                 val env = OrtEnvironment.getEnvironment()
-                val tokOpts = OrtSession.SessionOptions()
-                tokOpts.registerCustomOpLibrary(OrtxPackage.getLibraryPath())
-                val openedTokenizer = env.createSession(tokenizerBytes, tokOpts)
+                val openedTokenizer = OrtSession.SessionOptions().use { tokOpts ->
+                    tokOpts.registerCustomOpLibrary(OrtxPackage.getLibraryPath())
+                    env.createSession(tokenizerBytes, tokOpts)
+                }
                 tokenizer = openedTokenizer
-                val openedClassifier = env.createSession(classifierBytes, OrtSession.SessionOptions())
+                val openedClassifier = OrtSession.SessionOptions().use { opts ->
+                    env.createSession(classifierBytes, opts)
+                }
                 classifier = openedClassifier
                 val arr = JSONArray(labelsJson)
                 val parser = KieParser(
@@ -66,15 +67,13 @@ class KieParser private constructor(
                     openedClassifier,
                     List(arr.length()) { arr.getString(it) },
                 )
+                check(parser.pairLooksConsistent()) { "KIE tokenizer/classifier pair mismatch" }
                 tokenizer = null
                 classifier = null
-                if (parser.pairLooksConsistent()) parser else {
-                    parser.close()
-                    null
-                }
+                parser
             } catch (_: Throwable) {
-                classifier?.close()
-                tokenizer?.close()
+                runCatching { classifier?.close() }
+                runCatching { tokenizer?.close() }
                 null
             }
         }

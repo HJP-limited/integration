@@ -4,6 +4,7 @@ import com.hjp.searchlookup.OnDeviceEmbeddingEngine
 import com.hjp.tool.contract.ToolExecutionContext
 import com.hjp.tool.contract.ToolExecutionResult
 import com.hjp.tool.contract.ToolRequest
+import com.hjp.tool.contract.ToolAvailability
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
 import kotlinx.serialization.json.buildJsonObject
@@ -293,9 +294,18 @@ class ContactPluginsTest {
         val first = runCatching { backend.search("AI", 5) }
         assertTrue(first.exceptionOrNull() is IllegalStateException)
         assertTrue(repository.embeddings.isEmpty())
-        assertFalse(backend.configurationAvailable())
-
-        assertEquals("room-new", backend.search("AI", 5).hits.first().card.id)
+        // The agent checks tool availability before execute; direct backend retry alone did not
+        // test the real recovery path and masked a permanently disabled tool after one failure.
+        assertEquals(ToolAvailability.Ready, SearchContactsPlugin(backend).availability())
+        assertEquals(ToolAvailability.Ready, CountContactsPlugin(backend).availability())
+        assertEquals(ToolAvailability.Ready, GetContactPlugin(backend).availability())
+        val retried = SearchContactsPlugin(backend).execute(
+            ToolRequest("retry", ContactToolContracts.Search.capabilityId, ContactToolContracts.Search.version,
+                buildJsonObject { put("query", "AI") }),
+            ToolExecutionContext("s", "retry", "ko-KR", "Asia/Seoul"),
+        ) as ToolExecutionResult.Success
+        assertTrue(retried.data.toString().contains("room-new"))
+        assertTrue(retried.data.toString().contains("\"fallback_used\":false"))
         assertEquals(2, writes)
         assertEquals(1, repository.embeddings.size)
         assertTrue(backend.configurationAvailable())

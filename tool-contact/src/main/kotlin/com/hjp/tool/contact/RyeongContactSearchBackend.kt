@@ -38,7 +38,6 @@ class RyeongContactSearchBackend(
         val initializationMillis: Long,
     )
     @Volatile private var initialized: InitializedSearch? = null
-    @Volatile private var initializationFailed = false
 
     override suspend fun search(query: String, limit: Int): ContactSearchResponse = withContext(Dispatchers.Default) {
         val state = requireService()
@@ -118,11 +117,14 @@ class RyeongContactSearchBackend(
 
     override fun engineName(): String =
         initialized?.service?.engineName() ?: "ryeong-llm-integration-work@b543a18"
-    override fun configurationAvailable(): Boolean = !initializationFailed
+    // Availability describes whether this backend is configured, not whether its last IO succeeded.
+    // Latching it false after one storage/model-load error hides all contact tools on later turns,
+    // so their otherwise-retryable requireService() would never run again. Each execution still
+    // enforces required models and propagates failures; this is not a fallback or an automatic loop.
+    override fun configurationAvailable(): Boolean = true
 
     suspend fun invalidate() = initMutex.withLock {
         initialized = null
-        initializationFailed = false
     }
 
     /**
@@ -183,13 +185,11 @@ class RyeongContactSearchBackend(
                 }
                 // Publish only after persistence succeeds. A failed write must leave initialization
                 // retryable instead of returning an unpersisted snapshot on the next call.
-                initializationFailed = false
                 InitializedSearch(createdService, embeddingModelBacked, embeddingFallbackReason, initializationMillis)
                     .also { initialized = it }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                initializationFailed = true
                 throw error
             }
         }

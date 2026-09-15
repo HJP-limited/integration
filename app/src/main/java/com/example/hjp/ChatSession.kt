@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.hjp.agent.contract.AgentEvent
+import com.hjp.agent.core.AgentTurnEngine
 import com.hjp.tool.contact.BusinessCardRecord
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -32,7 +33,24 @@ import kotlinx.coroutines.launch
  * 커널 세션도 [AppContainer] 에 있으므로 화면에 보이는 대화와 모델이 기억하는 대화가 같은
  * 수명을 갖는다 — 하나만 살아남으면 둘이 어긋난다.
  */
-internal class ChatSession(private val container: AppContainer) {
+internal interface ChatSessionHost {
+    val engine: AgentTurnEngine
+    val contactBackend: RecordingContactSearchBackend
+    val modelLabel: String
+    fun onSessionUsed()
+    fun answerConfirmation(accepted: Boolean)
+    fun log(message: String)
+}
+
+internal class ChatSession(private val container: ChatSessionHost) {
+    constructor(container: AppContainer) : this(object : ChatSessionHost {
+        override val engine get() = container.engine
+        override val contactBackend get() = container.contactBackend
+        override val modelLabel get() = container.deployment.artifactId
+        override fun onSessionUsed() = container.onSessionUsed()
+        override fun answerConfirmation(accepted: Boolean) { container.answerConfirmation(accepted) }
+        override fun log(message: String) { android.util.Log.i(DIAG_TAG, message) }
+    })
 
     /**
      * 턴을 굴리는 자리. 앱이 살아 있는 동안 유지된다.
@@ -64,6 +82,8 @@ internal class ChatSession(private val container: AppContainer) {
         private set
 
     private var turnJob: Job? = null
+    private var resetting = false
+    private var resetRequired = false
 
     /**
      * 세션이 갈릴 때마다 올린다. 진행 중이던 턴이 **새 대화에 끼어드는 것**을 막는 표식이다.
@@ -89,7 +109,7 @@ internal class ChatSession(private val container: AppContainer) {
      */
     fun send(question: String) {
         val text = question.trim()
-        if (text.isEmpty() || busy) return
+        if (text.isEmpty() || busy || resetting || resetRequired) return
         // 대화가 시작됐음을 앱에 알린다. 작업 목록에서 앱을 지웠다가 다시 열면 빈 대화로
         // 시작한다는 보장이 이 표식에 달려 있다([HjpApplication]).
         container.onSessionUsed()
@@ -133,13 +153,21 @@ internal class ChatSession(private val container: AppContainer) {
                             }
                             status = "답변을 작성하고 있어요."
                         }
-                        is AgentEvent.FinalMessage ->
-                            if (answer.isBlank()) answer.append(event.text)
+                        is AgentEvent.FinalMessage -> {
+                            answer.setLength(0)
+                            answer.append(event.text)
+                        }
                         is AgentEvent.UserError -> failure = event.messageKo
                     }
                 }
             } catch (cancelled: CancellationException) {
                 // 취소는 실패가 아니다. 말풍선을 남기지 않고 조용히 물러난다.
+                if (turn == generation) {
+                    busy = false
+                    status = null
+                    confirmation = null
+                    container.contactBackend.clear()
+                }
                 throw cancelled
             } catch (error: Throwable) {
                 failure = error.message ?: error.javaClass.simpleName
@@ -156,8 +184,7 @@ internal class ChatSession(private val container: AppContainer) {
             val answerText = failure ?: answer.toString().trim().ifBlank { "답변을 만들지 못했어요." }
             // 실기기 진단 로그. `adb logcat -s HJP` 로 본다. 폰에서 무슨 일이 일어났는지
             // 이게 없으면 화면을 눈으로 읽는 수밖에 없다.
-            android.util.Log.i(
-                DIAG_TAG,
+            container.log(
                 buildString {
                     append("q=").append(text)
                     append(" | ms=").append(System.currentTimeMillis() - startedAt)
@@ -170,7 +197,7 @@ internal class ChatSession(private val container: AppContainer) {
             val finished = ChatMessage(
                 isUser = false,
                 text = answerText,
-                modelLabel = container.deployment.artifactId,
+                modelLabel = container.modelLabel,
                 cards = cards,
                 error = failure,
             )
@@ -183,7 +210,7 @@ internal class ChatSession(private val container: AppContainer) {
      * 세대를 올렸으므로 늦게 도착하는 답은 어차피 버려진다.
      */
     fun cancelTurn() {
-        if (!busy) return
+        if (!busy || resetting) return
         // 승인을 기다리며 멈춰 있으면 거절로 풀어 준다. 안 그러면 커널이 계속 매달린다.
         if (confirmation != null) container.answerConfirmation(false)
         generation += 1
@@ -192,17 +219,35 @@ internal class ChatSession(private val container: AppContainer) {
         busy = false
         status = null
         confirmation = null
+        container.contactBackend.clear()
     }
 
     /** 커널 세션을 갈아끼우고 화면의 대화도 비운다. 둘은 같이 움직여야 한다. */
     fun reset() {
+        if (resetting) return
         // 진행 중이던 턴을 먼저 끊는다(승인 대기도 같이 풀린다). 세대가 올라가므로
         // 늦게 끝난 옛 턴이 새 대화에 말풍선을 남기지 못한다.
         cancelTurn()
         generation += 1
+        resetting = true
+        resetRequired = true
+        busy = true
+        status = "새 대화를 준비하고 있어요."
+        clearMessages()
         scope.launch {
-            container.resetSession()
-            clearTranscript()
+            try {
+                container.engine.resetSession()
+                resetRequired = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val message = "대화 초기화에 실패했어요. 다시 새 대화를 눌러 주세요."
+                messages += ChatMessage(isUser = false, text = message, error = message)
+            } finally {
+                resetting = false
+                busy = false
+                status = if (resetRequired) "대화 초기화가 필요해요. 새 대화를 다시 눌러 주세요." else null
+            }
         }
     }
 
@@ -219,12 +264,19 @@ internal class ChatSession(private val container: AppContainer) {
      */
     fun clearTranscript() {
         scope.launch {
-            messages.clear()
-            messages += ChatMessage(isUser = false, text = GREETING)
-            status = null
+            cancelTurn()
+            generation += 1
+            clearMessages()
+            status = if (resetting) "새 대화를 준비하고 있어요." else null
             confirmation = null
-            busy = false
+            busy = resetting
         }
+    }
+
+    private fun clearMessages() {
+        messages.clear()
+        messages += ChatMessage(isUser = false, text = GREETING)
+        container.contactBackend.clear()
     }
 
     fun close() = scope.cancel()

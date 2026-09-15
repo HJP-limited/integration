@@ -3,11 +3,6 @@ package com.example.hjp
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
  * Owns the single temporary agent session for the life of the process.
@@ -30,8 +25,6 @@ import kotlinx.coroutines.runBlocking
  * No keep-alive service is added; nothing is written to disk; no previous session can be restored.
  */
 class HjpApplication : Application() {
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     private var liveActivities = 0
     private var sessionTouched = false
 
@@ -60,12 +53,9 @@ class HjpApplication : Application() {
                 val recreatedByConfigChange = savedInstanceState != null
                 val coldEntry = !recreatedByConfigChange && liveActivities == 0
                 if (coldEntry && sessionTouched) {
-                    // Runs inside Activity.onCreate, before the first composition, so a dismissed
-                    // task can never show the previous conversation. The transcript now outlives
-                    // the screen, so clearing the kernel's memory alone would leave the old
-                    // bubbles on screen with nothing behind them.
-                    runBlocking { container.resetSession() }
-                    container.clearChatTranscript()
+                    // Clear the UI before composition, and gate new submissions until the
+                    // suspending engine reset completes. Never block the Android main thread.
+                    container.chat.reset()
                     sessionTouched = false
                 }
             }
@@ -83,13 +73,10 @@ class HjpApplication : Application() {
             if (activity !is MainActivity) return
             if (activity.isChangingConfigurations) return
             if (!activity.isFinishing) return
-            // Called on the main thread, so the transcript is cleared in place; the kernel's own
-            // reset is suspending and goes to the application scope as before.
-            container.clearChatTranscript()
-            applicationScope.launch {
-                container.resetSession()
-                sessionTouched = false
-            }
+            // Use the same submission gate as the in-app "new conversation" button. A detached
+            // reset could otherwise finish after a newly reopened activity had started a turn.
+            container.chat.reset()
+            sessionTouched = false
         }
     }
 }

@@ -59,12 +59,18 @@ import com.example.hjp.ui.theme.EmeraldOnSoft
 import com.example.hjp.ui.theme.EmeraldSoft
 import com.example.hjp.ui.theme.Slate400
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.max
+
+// Disposal must outlive composition cancellation and never wait for native inference on main.
+private val ocrDisposalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 /** 인식은 끝났고 아직 저장 전인 명함. SCR-03 → SCR-04 로 넘어가는 값. */
 data class OcrDraft(
@@ -95,19 +101,22 @@ fun CaptureScreen(
     var ocr by remember { mutableStateOf<AndroidOcr?>(null) }
     var loadFailed by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        var unowned = withContext(Dispatchers.IO) { AndroidOcr.createOrNull(context) }
+        var unowned: AndroidOcr? = null
         try {
+            // Assign inside IO: prompt cancellation during dispatcher return must not lose the
+            // only reference to an already-created native engine.
+            withContext(Dispatchers.IO) { unowned = AndroidOcr.createOrNull(context) }
             currentCoroutineContext().ensureActive()
             ocr = unowned
             loadFailed = unowned == null
             unowned = null
         } finally {
-            unowned?.close()
+            withContext(NonCancellable + Dispatchers.IO) { unowned?.close() }
         }
     }
     DisposableEffect(ocr) {
         val owned = ocr
-        onDispose { owned?.close() }
+        onDispose { ocrDisposalScope.launch { owned?.close() } }
     }
 
     var busy by remember { mutableStateOf(false) }
@@ -246,7 +255,8 @@ fun CaptureScreen(
             SectionCard {
                 SectionTitle("OCR 모델을 불러오지 못했어요")
                 Text(
-                    "assets/ocr 의 det.onnx · rec.onnx · korean_dict.txt 가 있는지 확인해 주세요.",
+                    "OCR 검출·인식·글줄 방향 모델, KIE 분류기·토크나이저·라벨 및 문자 사전이 모두 필요해요. " +
+                        "assets/ocr 자산과 모델 로드 상태를 확인해 주세요. 모델 없이 인식을 진행하지 않습니다.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),

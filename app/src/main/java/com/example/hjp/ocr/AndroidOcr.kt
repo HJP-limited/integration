@@ -23,22 +23,28 @@ class AndroidOcrAssets(context: Context) : OcrAssets {
  * 안드로이드용 OCR 진입점. 파이프라인 본체는 [OcrPipeline](:core-ocr)이고 여기서는
  * Bitmap 을 OpenCV BGR Mat 으로 바꿔 넘기는 일만 한다.
  *
- * KIE 모델이 없으면 [CardParser] 휴리스틱으로 자동 폴백한다 — 분류 정확도는 떨어지지만
- * (98.0% → 85.3%) 촬영·인식 자체는 그대로 동작해야 한다.
+ * det/rec, 글줄 방향, KIE 모델을 모두 로드해야 인식을 시작한다. 필수 모델이 없으면
+ * 촬영 인식을 차단하며 휴리스틱으로 성공 처리하지 않는다.
  */
 class AndroidOcr private constructor(
     private val pipeline: OcrPipeline,
-    private val kie: KieParser?,
+    private val kie: KieParser,
 ) : AutoCloseable {
-    val fieldClassifier: String = if (kie != null) "MiniLM KIE" else "CardParser 휴리스틱(폴백)"
+    val fieldClassifier: String = "MiniLM KIE"
     val textLineOrientationEnabled: Boolean get() = pipeline.textLineOrientationEnabled
+    private var closed = false
 
+    @Synchronized
     override fun close() {
-        kie?.close()
-        pipeline.close()
+        if (closed) return
+        closed = true
+        try { kie.close() } finally { pipeline.close() }
     }
 
+    // Screen disposal must not release native sessions while IO inference is using them.
+    @Synchronized
     fun read(bitmap: Bitmap): Result {
+        check(!closed) { "OCR engine is closed" }
         val bgr = Mat()
         return try {
             Utils.bitmapToMat(bitmap, bgr) // RGBA
@@ -49,7 +55,7 @@ class AndroidOcr private constructor(
             // 없는 명함에서 너비가 작게 잡힌다.
             Result(
                 regions,
-                kie?.parse(regions, bitmap.width, bitmap.height) ?: CardParser.parse(regions),
+                kie.parse(regions, bitmap.width, bitmap.height),
             )
         } finally {
             bgr.release()
@@ -71,7 +77,14 @@ class AndroidOcr private constructor(
             } catch (_: Throwable) {
                 return null
             }
-            return AndroidOcr(pipeline, KieParser.createOrNull(assets))
+            var transferred = false
+            try {
+                if (!pipeline.textLineOrientationEnabled) return null
+                val kie = KieParser.createOrNull(assets) ?: return null
+                return AndroidOcr(pipeline, kie).also { transferred = true }
+            } finally {
+                if (!transferred) pipeline.close()
+            }
         }
     }
 }

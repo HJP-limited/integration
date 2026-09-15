@@ -125,6 +125,8 @@ class AppContainer(context: Context) : AutoCloseable {
      * 도구가 찾은 명함을 화면이 그대로 쓰도록 기록한다. 감싸기만 하고 결과는 바꾸지 않는다.
      */
     val contactBackend = RecordingContactSearchBackend(rawContactBackend)
+    /** Directory-tab searches share the engine, but must not change a chat turn's evidence. */
+    val directorySearchBackend: com.hjp.tool.contact.ContactSearchBackend get() = rawContactBackend
 
     /**
      * Which spans of an utterance name somebody in the store. Consulted by the kernel before
