@@ -214,10 +214,15 @@ object DeterministicTurnRouter {
         // "그 사람들 이름 알려줘" 는 단수 focus 치환으로 잡히지 않아(가리키는 게 한 명이
         // 아니다) 그대로 검색으로 내려갔고, 지시어가 검색어가 돼 무관한 카드를 물어왔다.
         // 가리킬 집합이 실제로 있을 때만 settle 한다 — 없으면 평소대로 검색한다.
-        if (ConversationalFollowup.pointsAtPreviousGroup(raw)) {
-            ConversationalFollowup.groupAnswer(context)?.let { answer ->
-                return Decision(DialogueAct.CONTACT_DETAIL, TurnRoutePlan.AnswerFromHistory(answer))
+        if (ConversationalFollowup.pointsAtPreviousGroup(raw) && context.memory.candidateContacts.isNotEmpty()) {
+            if (ConversationalFollowup.onlyRequestsPreviousGroupList(raw)) {
+                ConversationalFollowup.groupAnswer(context)?.let { answer ->
+                    return Decision(DialogueAct.CONTACT_DETAIL, TurnRoutePlan.AnswerFromHistory(answer))
+                }
             }
+            // Filtering or acting on the group needs the normal engine and its candidate memory.
+            // Do not replay the unfiltered list or reinterpret the plural as a single selected person.
+            return Decision(actOf(raw, context), TurnRoutePlan.Continue(raw))
         }
 
         // 직전 답변에 대한 정정/확인("5명인데?", "아닌데")에는 검색할 내용이 아예 없다.

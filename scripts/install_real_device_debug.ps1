@@ -5,7 +5,8 @@
 # 강제로 다시 보내려면 -ForceModels 를 준다.
 param(
     [switch]$ForceModels,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$RunMultiturn165
 )
 
 $ErrorActionPreference = "Stop"
@@ -181,12 +182,24 @@ $requiredTests = @(
     "com.example.hjp.OcrAssetsInstrumentedTest",
     "com.example.hjp.LiteRtGatewayToolCallInstrumentedTest",
     "com.example.hjp.EmbeddingGemmaArm64InstrumentedTest"
-) -join ','
+)
+if ($RunMultiturn165) {
+    $requiredTests += "com.example.hjp.CurrentMultiturn165InstrumentedTest"
+    Write-Host "현재 165개/435턴 전체 앱 재생을 실행합니다. 장시간이 걸리며 테스트 기기를 사용하세요."
+}
+$requiredTests = $requiredTests -join ','
 $testOutput = & $adb @adbTarget shell am instrument -w -r `
     -e class $requiredTests `
     com.example.hjp.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$instrumentExit = $LASTEXITCODE
 $testOutput | Out-Host
-if ($LASTEXITCODE -ne 0 -or -not ($testOutput -match 'OK \(')) {
+$evidenceExit = 0
+if ($RunMultiturn165) {
+    # Preserve partial evidence even when the evaluator fails. Never remove device reports here.
+    & $adb @adbTarget pull "/sdcard/Android/data/com.example.hjp/files/evaluation" "build/multiturn-165-evidence"
+    $evidenceExit = $LASTEXITCODE
+}
+if ($instrumentExit -ne 0 -or $evidenceExit -ne 0 -or -not ($testOutput -match 'OK \(')) {
     throw "필수 모델 통합 테스트 실패. 누락 모델을 폴백/skip으로 통과시키지 않습니다."
 }
 

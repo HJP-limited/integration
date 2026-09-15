@@ -22,12 +22,16 @@ import com.hjp.agent.contract.TurnContext
  */
 internal object ConversationalFollowup {
 
-    private val META_PATTERNS = listOf(
-        "인데", "아닌데", "아니야", "아니고", "아냐", "맞아", "맞나", "맞지", "틀렸", "잘못",
-        "다시", "왜", "진짜", "정말", "확실", "그래서",
+    // Match the whole reaction, never a substring of a new name/condition/question.
+    private val BARE_REACTION = Regex(
+        "(?:아닌데(?:요)?|아니야|아냐|맞아(?:요)?|맞나(?:요)?|맞지(?:요)?|틀렸(?:어|어요)?|" +
+            "잘못됐(?:어|어요)?|왜|진짜|정말|확실해(?:요)?|그래서)",
     )
-
-    private val COUNT_UNITS = listOf("명", "개", "건", "곳", "군데")
+    private val COUNT_REACTION = Regex("\\d+\\s*(?:명|개|건|곳|군데)(?:인데(?:요)?|이야|야)?")
+    private val GROUP_LIST_REQUEST = Regex(
+        "(?:의)?\\s*(?:이름|명단|목록)?\\s*(?:(?:을|를)\\s*)?" +
+            "(?:알려\\s*줘|보여\\s*줘|누구(?:야|지|예요)?|다시\\s*보여\\s*줘)?",
+    )
 
     /**
      * 무언가를 **해 달라는** 말. 이게 있으면 반응이 아니라 요청이다.
@@ -48,7 +52,7 @@ internal object ConversationalFollowup {
      */
     private val GROUP_REFERENCES = listOf(
         "그 사람들", "그사람들", "그분들", "그 분들", "이 사람들", "이사람들",
-        "저 사람들", "저사람들", "그들", "걔네", "그 명단", "그 목록", "위 사람들", "방금 그",
+        "저 사람들", "저사람들", "그들", "걔네", "그 명단", "그 목록", "위 사람들",
     )
 
     /** 직전 집합 전체를 가리키는 발화인가. */
@@ -57,21 +61,25 @@ internal object ConversationalFollowup {
         return GROUP_REFERENCES.any { it in q }
     }
 
+    /** Only an unqualified request to repeat the list can use the cached list verbatim. */
+    fun onlyRequestsPreviousGroupList(question: String): Boolean {
+        val q = question.trim().trimEnd('?', '!', '.', ' ')
+        return GROUP_REFERENCES.any { reference ->
+            q.startsWith(reference) && GROUP_LIST_REQUEST.matches(q.removePrefix(reference).trim())
+        }
+    }
+
     /**
      * 직전 답변에 대한 정정·확인·되묻기인가. true 면 새로 검색하지 않는다.
      *
-     * 문장이 길면 새 질문일 가능성이 크므로 낱말 넷까지만 본다 — "왜"나 "다시" 같은 흔한
-     * 낱말이 긴 문장 안에 우연히 들어 있다고 되짚기로 볼 수는 없다.
+     * 짧은 문장도 새 이름이나 조건을 담을 수 있다. 문장 전체가 단독 반응이나 수량 정정인
+     * 경우만 처리하고, "현수 아니고 허현" 같은 실질적인 정정은 정상 라우터로 보낸다.
      */
     fun isReactionToLastAnswer(question: String): Boolean {
         val q = question.trim().trimEnd('?', '!', '.', ' ')
         if (q.isEmpty()) return false
         if (EXPLICIT_REQUEST.any { it in q }) return false
-        val tokens = q.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (tokens.size > 4) return false
-        if (META_PATTERNS.any { it in q }) return true
-        // "5명", "3개" 처럼 수량만 말한 정정도 대화형으로 본다.
-        return tokens.size <= 2 && q.any { it.isDigit() } && COUNT_UNITS.any { it in q }
+        return BARE_REACTION.matches(q) || COUNT_REACTION.matches(q)
     }
 
     /**

@@ -6,6 +6,7 @@ plugins {
 }
 
 android {
+    sourceSets.getByName("test").resources.srcDir("src/androidTest/assets")
     androidResources {
         noCompress += "onnx"
         noCompress += "tflite"

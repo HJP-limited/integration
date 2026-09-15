@@ -94,6 +94,38 @@ class RecoveredUpstreamBehaviourTest {
         assertFalse("expected a normal route, got $plan", plan is TurnRoutePlan.AnswerFromHistory)
     }
 
+    @Test
+    fun `a group filter reaches the engine instead of replaying the unfiltered list`() {
+        val question = "그 사람들 중 서울 사람만"
+        val plan = DeterministicTurnRouter.route(context(question, people, "이전 전체 명단"))
+        assertTrue("expected Continue, got $plan", plan is TurnRoutePlan.Continue)
+        assertEquals(question, (plan as TurnRoutePlan.Continue).text)
+    }
+
+    @Test
+    fun `a group action is not answered by repeating names`() {
+        val plan = DeterministicTurnRouter.route(context("그 사람들한테 메일 작성해줘", people))
+        assertTrue("expected Continue, got $plan", plan is TurnRoutePlan.Continue)
+    }
+
+    @Test
+    fun `a recent singular reference is not mistaken for the whole group`() {
+        assertFalse(ConversationalFollowup.pointsAtPreviousGroup("방금 그 사람 이메일은?"))
+    }
+
+    @Test
+    fun `a replacement name is not swallowed as a reaction`() {
+        val plan = DeterministicTurnRouter.route(context("현수 아니고 허현", lastAnswer = "현수 명함입니다."))
+        assertTrue("expected CorrectionReplacement, got $plan", plan is TurnRoutePlan.CorrectionReplacement)
+    }
+
+    @Test
+    fun `reaction words inside substantive questions do not replay history`() {
+        listOf("현수 아니고 허현", "아니 박민수", "서울인데 부산 사람만", "왜 보험이 필요해", "개발자 5명").forEach {
+            assertFalse(it, ConversationalFollowup.isReactionToLastAnswer(it))
+        }
+    }
+
     // ---- 3. 정정/확인 발화 (ryeong ConversationalFollowup.isFollowup) -----------------------
 
     @Test

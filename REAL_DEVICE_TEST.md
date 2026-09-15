@@ -36,6 +36,9 @@ FunctionGemma 는 더 이상 쓰지 않는다 — 대화/도구호출 모델을 
 .\scripts\install_real_device_debug.ps1
 ```
 
+현재 멀티턴 165개/435턴 전체를 앱에서 재생하려면 `-RunMultiturn165`를 추가한다.
+장시간 실제 모델 실행이며, 버전과 채점 범위는 [165 시나리오 실행](docs/165_시나리오_실행.md)을 참고한다.
+
 하는 일 — 모델 폴더 확인(못 찾으면 **설치 전에 멈춘다**) → `:app:assembleDebug` →
 APK 안에 `liblitertlm_jni.so`·`libgemma_embedding_model_jni.so`·`kie_minilm_int8.onnx` 가
 실제로 들어갔는지 확인 → 설치 → 모델 3개 전송(크기가 같으면 건너뜀).
