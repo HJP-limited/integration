@@ -15,6 +15,21 @@ import org.junit.Test
 
 class ToolResultProjectorTargetTest {
     @Test
+    fun `retired focus is removed from model capability state too`() = runBlocking {
+        val store = InMemoryAgentSessionStore()
+        val key = SessionStateKey("contact", "selected_contact")
+        val data = buildJsonObject { put("card_id", "old"); put("name", "김지원") }
+        val memory = ToolResultProjector.project(ConversationMemory(), "get_contact", data, 1L)
+        store.update {
+            it.conversationMemory = memory
+            it.capabilityState[key] = StoredSessionState(ContractVersion(1, 0), data)
+        }
+        store.retireActionableFocus()
+        assertNull(store.getOrCreate().capabilityState[key])
+        assertEquals(ToolResultProjector.retireActionableFocus(memory), store.getOrCreate().conversationMemory)
+    }
+
+    @Test
     fun `new acquisition retires both candidate stores but preserves other memory`() = runBlocking {
         val store = InMemoryAgentSessionStore()
         val data = buildJsonObject {

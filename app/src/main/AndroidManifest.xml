@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Android 11+ 패키지 가시성: 캘린더/메일/문자 앱을 resolve하기 위해 필요 -->
     <queries>
         <intent>

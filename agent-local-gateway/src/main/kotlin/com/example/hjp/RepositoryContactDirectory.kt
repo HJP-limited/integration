@@ -49,7 +49,7 @@ class RepositoryContactDirectory(
     private var index: Index? = null
 
     /** Drops the cached index. Call after anything that can add, rename or remove a card. */
-    fun invalidate() {
+    suspend fun invalidate() = mutex.withLock {
         index = null
     }
 

@@ -635,19 +635,24 @@ internal fun ModelsScreen(
     val scope = rememberCoroutineScope()
     var importMessage by remember { mutableStateOf<String?>(null) }
     var pendingModelFileName by remember { mutableStateOf(GENERATIVE_MODEL_FILE) }
+    var embeddingChecking by remember { mutableStateOf(false) }
+    var embeddingChecked by remember { mutableStateOf<Boolean?>(null) }
+    var embeddingResult by remember { mutableStateOf<String?>(null) }
     // 아티팩트 판정은 커널이 파일 **내용**을 보고 한다. 화면은 그 결과만 읽는다 —
     // 파일 이름으로 판단하면 이름만 바꿔 둔 파일이 통과해 버린다.
     var snapshot by remember { mutableStateOf(container.diagnosticsSnapshot()) }
 
     val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
+        val selectedFileName = pendingModelFileName
         scope.launch {
-            importMessage = pendingModelFileName + " 복사 중... (파일 크기에 따라 시간이 걸립니다)"
+            importMessage = selectedFileName + " 복사·검증 중... (파일 크기에 따라 시간이 걸립니다)"
             val result = withContext(Dispatchers.IO) {
-                runCatching { copyModelToAppStorage(context, uri, pendingModelFileName) }
+                runCatching { copyModelToAppStorage(context, uri, selectedFileName) }
+                    .onFailure { if (it is CancellationException) throw it }
             }
             result.onSuccess { copied ->
-                importMessage = pendingModelFileName + " 복사 완료 (" + formatBytes(copied.length()) + ")" +
+                importMessage = selectedFileName + " 복사·검증 완료 (" + formatBytes(copied.length()) + ")" +
                     NEEDS_RESTART_NOTE
             }.onFailure {
                 importMessage = "복사 실패: " + (it.message ?: it.javaClass.simpleName)
@@ -665,6 +670,7 @@ internal fun ModelsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("모델 파일 관리", style = MaterialTheme.typography.titleLarge)
+        com.example.hjp.ui.ModelDownloadPanel()
 
         ModelCard(
             title = "대화·도구 호출 모델",
@@ -687,23 +693,38 @@ internal fun ModelsScreen(
             title = "임베딩 모델",
             subtitle = "EmbeddingGemma 300M · 모델(.tflite) + 토크나이저(sentencepiece.model) 2개 파일 필요",
             role = "\"판교에서 만난 AI 하는 분\"처럼 문장 뜻으로 명함을 찾습니다. " +
-                "없으면 키워드 검색만으로 내려갑니다.",
-            // 임베더는 첫 검색에서 지연 로드된다. 파일 유무만으로 단정하지 않고,
-            // 실제로 검색이 한 번 돌아 기록된 엔진 이름을 보고 판정한다.
-            state = if (container.contactBackend.engineName().contains("HYBRID", ignoreCase = true)) {
-                ModelState.Ready
-            } else {
-                ModelState.Missing
+                "모델이 없거나 실패하면 검색을 중단합니다. 키워드 검색으로 대체하지 않습니다.",
+            // 엔진 이름에 HYBRID가 들어가는지 추측하지 않고 실제 추론 결과로 판정한다.
+            state = when (embeddingChecked) {
+                true -> ModelState.Ready
+                false -> ModelState.Failed
+                null -> ModelState.Missing
             },
-            stateLabel = container.contactBackend.engineName(),
+            stateLabel = embeddingResult ?: "실제 추론 미검증 — 아래 동작 확인을 눌러 주세요",
             detail = "",
             onImport = {
                 pendingModelFileName = EMBEDDING_MODEL_FILE
                 modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
             },
-            checking = false,
-            onCheck = { snapshot = container.diagnosticsSnapshot() },
+            checking = embeddingChecking,
+            onCheck = {
+                embeddingChecking = true
+                scope.launch {
+                    try {
+                        embeddingResult = container.checkEmbeddingModel()
+                        embeddingChecked = true
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        embeddingResult = "실행 실패: " + (error.message ?: error.javaClass.simpleName)
+                        embeddingChecked = false
+                    } finally { embeddingChecking = false }
+                    snapshot = container.diagnosticsSnapshot()
+                }
+            },
             resultText = null,
+            canCheckWithoutReady = true,
+            checkLabel = "동작 확인",
             secondaryImportLabel = "토크나이저 가져오기",
             onSecondaryImport = {
                 pendingModelFileName = EMBEDDING_TOKENIZER_FILE
@@ -733,7 +754,7 @@ private const val EMBEDDING_MODEL_FILE = "embeddinggemma-300m.tflite"
 private const val EMBEDDING_TOKENIZER_FILE = "sentencepiece.model"
 
 /** 아티팩트 판정은 프로세스 시작 때 한 번 한다 — 새 파일은 앱을 다시 열어야 잡힌다. */
-private const val NEEDS_RESTART_NOTE = " — 앱을 다시 열면 반영됩니다."
+private const val NEEDS_RESTART_NOTE = " — 앱을 강제 종료한 뒤 다시 열어야 반영됩니다."
 
 @Composable
 private fun BusinessCardResultCard(card: BusinessCardRecord, onClick: (() -> Unit)? = null) {
@@ -871,6 +892,8 @@ private fun ModelCard(
     resultText: String?,
     secondaryImportLabel: String? = null,
     onSecondaryImport: (() -> Unit)? = null,
+    canCheckWithoutReady: Boolean = false,
+    checkLabel: String = "상태 확인",
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -901,10 +924,10 @@ private fun ModelCard(
                 }
                 OutlinedButton(
                     onClick = onCheck,
-                    enabled = !checking && state != ModelState.Missing,
+                    enabled = !checking && (canCheckWithoutReady || state != ModelState.Missing),
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text(if (checking) "확인 중..." else "동작 확인")
+                    Text(if (checking) "확인 중..." else checkLabel)
                 }
             }
             if (secondaryImportLabel != null && onSecondaryImport != null) {
@@ -944,15 +967,12 @@ private fun StatusCard(
 
 
 
-private fun copyModelToAppStorage(context: Context, uri: Uri, fileName: String): File {
+private suspend fun copyModelToAppStorage(context: Context, uri: Uri, fileName: String): File {
     val dir = context.getExternalFilesDir("models") ?: File(context.filesDir, "models")
-    dir.mkdirs()
-    val out = File(dir, fileName)
-    context.contentResolver.openInputStream(uri).use { input ->
-        requireNotNull(input) { "Could not open selected file." }
-        out.outputStream().use { output -> input.copyTo(output) }
+    val model = com.example.hjp.models.ModelDownloads.required.single { it.fileName == fileName }
+    return com.example.hjp.models.ModelInstaller(dir).installFrom(model) {
+        requireNotNull(context.contentResolver.openInputStream(uri)) { "Could not open selected file." }
     }
-    return out
 }
 
 private fun formatBytes(bytes: Long): String {

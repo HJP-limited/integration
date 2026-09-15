@@ -23,13 +23,13 @@ class AndroidEmbeddingGemmaEngine(context: Context) : EmbeddingEngine, AutoClose
     private val tokenizerFile = findFile(TOKENIZER_FILE_NAME)
     private val modelHash = modelFile?.let(::sha256).orEmpty()
     private val tokenizerHash = tokenizerFile?.let(::sha256).orEmpty()
-    private var model: GemmaEmbeddingModel? = null
+    @Volatile private var model: GemmaEmbeddingModel? = null
     @Volatile private var status: String
 
     init {
         status = when {
             isEmulator() ->
-                "UNSUPPORTED_EMULATOR_NATIVE_SME2:use KEYWORD_ONLY or a physical ARM64 device"
+                "UNSUPPORTED_EMULATOR_NATIVE_SME2:physical ARM64 device required"
             modelFile == null ->
                 "ASSET_MISSING:$MODEL_FILE_NAME expected=${expectedLocations(MODEL_FILE_NAME)};$bootstrapDiagnostics"
             tokenizerFile == null ->
@@ -71,12 +71,12 @@ class AndroidEmbeddingGemmaEngine(context: Context) : EmbeddingEngine, AutoClose
 
     override fun diagnosticStatus(): String = status
 
-    override fun close() {
+    @Synchronized override fun close() {
         model = null
         status = "closed"
     }
 
-    private fun run(data: EmbedData<String>): FloatArray {
+    @Synchronized private fun run(data: EmbedData<String>): FloatArray {
         val activeModel = model ?: throw IllegalStateException(
             "EmbeddingGemma is not ready: $status",
         )

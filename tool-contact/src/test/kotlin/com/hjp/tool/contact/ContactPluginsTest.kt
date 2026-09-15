@@ -5,6 +5,7 @@ import com.hjp.tool.contract.ToolExecutionContext
 import com.hjp.tool.contract.ToolExecutionResult
 import com.hjp.tool.contract.ToolRequest
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertFalse
@@ -301,6 +302,61 @@ class ContactPluginsTest {
     }
 
     @Test
+    fun `invalidation during first search cannot publish an obsolete card snapshot`() = runBlocking {
+        val loaded = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var first = true
+        val repository = object : EmbeddingFixtureRepository(listOf(BusinessCardRecord("old", "김지원"))) {
+            override suspend fun loadAll(): List<BusinessCardRecord> {
+                val cards = super.loadAll().toList()
+                if (first) {
+                    first = false
+                    loaded.complete(Unit)
+                    release.await()
+                }
+                return cards
+            }
+        }
+        val backend = RyeongContactSearchBackend(repository,
+            embeddingEngineFactory = { OnDeviceEmbeddingEngine.required(TestEmbeddingGemma()) },
+            requireModelBacked = true)
+        val oldRead = async { backend.search("김지원", 5) }
+        loaded.await()
+        repository.add(BusinessCardRecord("new", "이서연"))
+        val invalidation = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            backend.invalidate()
+        }
+        try { assertFalse(invalidation.isCompleted) } finally { release.complete(Unit) }
+        oldRead.await()
+        invalidation.await()
+        assertEquals("new", backend.get("new")?.id)
+    }
+
+    @Test
+    fun `in flight search keeps its model status when another turn invalidates the cache`() = runBlocking {
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val repository = object : EmbeddingFixtureRepository(listOf(BusinessCardRecord("ai", "Researcher", memo = "AI"))),
+            BusinessCardKeywordIndex {
+            override suspend fun searchKeywordCandidates(query: String, limit: Int): List<KeywordSearchCandidate> {
+                entered.complete(Unit)
+                release.await()
+                return emptyList()
+            }
+        }
+        val backend = RyeongContactSearchBackend(repository,
+            embeddingEngineFactory = { OnDeviceEmbeddingEngine.required(TestEmbeddingGemma()) },
+            requireModelBacked = true)
+        val query = async { backend.search("AI", 5) }
+        entered.await()
+        try { backend.invalidate() } finally { release.complete(Unit) }
+        val response = query.await()
+        assertEquals("HYBRID", response.mode)
+        assertFalse(response.fallbackUsed)
+        assertEquals("ai", response.hits.first().card.id)
+    }
+
+    @Test
     fun `get rejects a card id that no longer resolves in room repository`() = runBlocking {
         val card = BusinessCardRecord("room-stale", "김지원")
         var available = true
@@ -341,7 +397,7 @@ class ContactPluginsTest {
             cards.removeAll { it.id == card.id }
             cards += card
         }
-        override suspend fun loadAll() = cards
+        override suspend fun loadAll(): List<BusinessCardRecord> = cards
         override suspend fun getById(cardId: String) = cards.firstOrNull { it.id == cardId }
         override suspend fun loadEmbeddings(modelName: String) =
             embeddings.filter { it.modelName == modelName }

@@ -280,12 +280,24 @@ class AppContainer(context: Context) : AutoCloseable {
 
     val modelReady: Boolean get() = emulatorCompatibilityMode || deployment.usable
 
+    /** Runs real embedding inference off the UI thread; never substitutes a keyword engine. */
+    suspend fun checkEmbeddingModel(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val vector = embeddingGemmaEngine.value.embedQuery("검색 모델 동작 확인")
+        check(embeddingGemmaEngine.value.isModelBacked()) { "필수 임베딩 모델을 사용할 수 없습니다." }
+        "실제 임베딩 생성 성공: ${vector.size}차원"
+    }
+
     /** Non-PII snapshot for debug diagnostics. Never contains names, addresses or tool payloads. */
     fun diagnosticsSnapshot(): Map<String, String> = buildMap {
         put("kernel_mode", kernelMode.name)
         put("kernel_switch_available", kernelSwitchAvailable.toString())
         put("emulator_compatibility_mode", emulatorCompatibilityMode.toString())
         putAll(deployment.diagnosticSummary())
+        put("embedding_initialized", embeddingGemmaEngine.isInitialized().toString())
+        if (embeddingGemmaEngine.isInitialized()) {
+            put("embedding_model_backed", embeddingGemmaEngine.value.isModelBacked().toString())
+            put("embedding_status", embeddingGemmaEngine.value.diagnosticStatus())
+        }
         // Release builds still expose no turn detail; only debug bring-up needs it.
         if (BuildConfig.DEBUG) reactKernel.diagnostics.last?.asMap()?.forEach(::put)
     }

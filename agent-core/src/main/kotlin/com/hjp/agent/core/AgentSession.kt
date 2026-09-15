@@ -210,6 +210,7 @@ suspend fun AgentSessionStore.invalidateStaleCard(cardId: String) {
 suspend fun AgentSessionStore.retireActionableFocus() {
     update { session ->
         session.conversationMemory = ToolResultProjector.retireActionableFocus(session.conversationMemory)
+        session.capabilityState.remove(SessionStateKey("contact", "selected_contact"))
     }
 }
 

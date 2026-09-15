@@ -31,15 +31,19 @@ class RyeongContactSearchBackend(
     private val searchPlanObserver: SearchPlanObserver = SearchPlanObserver.NONE,
 ) : ContactSearchBackend {
     private val initMutex = Mutex()
-    @Volatile private var service: SearchLookupService? = null
-    @Volatile private var embeddingModelBacked = false
-    @Volatile private var embeddingFallbackReason = ""
-    @Volatile private var initializationMillis = 0L
+    private data class InitializedSearch(
+        val service: SearchLookupService,
+        val modelBacked: Boolean,
+        val fallbackReason: String,
+        val initializationMillis: Long,
+    )
+    @Volatile private var initialized: InitializedSearch? = null
     @Volatile private var initializationFailed = false
 
     override suspend fun search(query: String, limit: Int): ContactSearchResponse = withContext(Dispatchers.Default) {
-        val searchService = requireService()
-        val mode = if (embeddingModelBacked) RetrievalMode.HYBRID else RetrievalMode.KEYWORD_ONLY
+        val state = requireService()
+        val searchService = state.service
+        val mode = if (state.modelBacked) RetrievalMode.HYBRID else RetrievalMode.KEYWORD_ONLY
         val indexedKeyword = (repository as? BusinessCardKeywordIndex)
             ?.searchKeywordCandidates(query, maxOf(limit * 8, 40))
             ?.mapNotNull { candidate ->
@@ -52,8 +56,8 @@ class RyeongContactSearchBackend(
                 ).withRank(candidate.rank)
             }
         val response = searchService.retrieve(query, limit, mode, indexedKeyword, searchPlanObserver)
-        val fallbackUsed = response.fallbackUsed || !embeddingModelBacked
-        val fallbackReason = response.fallbackReason.ifBlank { embeddingFallbackReason }
+        val fallbackUsed = response.fallbackUsed || !state.modelBacked
+        val fallbackReason = response.fallbackReason.ifBlank { state.fallbackReason }
         if (requireModelBacked && response.mode == RetrievalMode.KEYWORD_ONLY &&
             fallbackReason != "IDENTIFIER_QUERY_SEMANTIC_EXCLUDED"
         ) {
@@ -90,7 +94,7 @@ class RyeongContactSearchBackend(
             },
             elapsedMillis = response.elapsedMillis,
             queryEmbeddingMillis = response.queryEmbeddingMillis,
-            initializationMillis = initializationMillis,
+            initializationMillis = state.initializationMillis,
         ))
         ContactSearchResponse(
             hits = hits,
@@ -103,24 +107,21 @@ class RyeongContactSearchBackend(
     }
 
     override suspend fun countMatching(query: String): Int? = withContext(Dispatchers.Default) {
-        val counted = requireService().countMatching(query)
+        val counted = requireService().service.countMatching(query)
         if (counted == SearchLookupService.COUNT_NOT_COUNTABLE) null else counted
     }
 
     override suspend fun get(cardId: String): BusinessCardRecord? = withContext(Dispatchers.Default) {
-        val indexedCard = requireService().getCard(cardId) ?: return@withContext null
+        val indexedCard = requireService().service.getCard(cardId) ?: return@withContext null
         repository.getById(indexedCard.id)
     }
 
     override fun engineName(): String =
-        service?.engineName() ?: "ryeong-llm-integration-work@b543a18"
+        initialized?.service?.engineName() ?: "ryeong-llm-integration-work@b543a18"
     override fun configurationAvailable(): Boolean = !initializationFailed
 
-    fun invalidate() {
-        service = null
-        embeddingModelBacked = false
-        embeddingFallbackReason = ""
-        initializationMillis = 0L
+    suspend fun invalidate() = initMutex.withLock {
+        initialized = null
         initializationFailed = false
     }
 
@@ -133,17 +134,17 @@ class RyeongContactSearchBackend(
      */
     suspend fun refreshAfterCardChange() = withContext(Dispatchers.Default) {
         invalidate()
-        requireService()
-        check(embeddingModelBacked) {
+        val state = requireService()
+        check(state.modelBacked) {
             "Business-card embedding refresh failed: " +
-                embeddingFallbackReason.ifBlank { "model-backed embedding unavailable" }
+                state.fallbackReason.ifBlank { "model-backed embedding unavailable" }
         }
     }
 
-    private suspend fun requireService(): SearchLookupService {
-        service?.let { return it }
+    private suspend fun requireService(): InitializedSearch {
+        initialized?.let { return it }
         return initMutex.withLock {
-            service?.let { return@withLock it }
+            initialized?.let { return@withLock it }
             try {
                 val cards = repository.loadAll()
                 require(cards.map { it.id }.distinct().size == cards.size) {
@@ -171,13 +172,10 @@ class RyeongContactSearchBackend(
                     storedEmbeddings.map { it.toRyeongEmbedding() },
                 )
                 val createdService = SearchLookupService(snapshot, embeddingEngine)
-                initializationMillis =
+                val initializationMillis =
                     (System.nanoTime() - initializationStarted) / 1_000_000L
-                createdService.also {
-                    embeddingModelBacked = embeddingEngine.isModelBacked
-                    embeddingFallbackReason =
-                        if (embeddingModelBacked) "" else embeddingEngine.diagnosticStatus()
-                }
+                val embeddingModelBacked = embeddingEngine.isModelBacked
+                val embeddingFallbackReason = if (embeddingModelBacked) "" else embeddingEngine.diagnosticStatus()
                 if (embeddingModelBacked && embeddingStore != null) {
                     embeddingStore.upsertEmbeddings(
                         snapshot.allEmbeddings().map { it.toStoredEmbedding() },
@@ -186,8 +184,8 @@ class RyeongContactSearchBackend(
                 // Publish only after persistence succeeds. A failed write must leave initialization
                 // retryable instead of returning an unpersisted snapshot on the next call.
                 initializationFailed = false
-                service = createdService
-                createdService
+                InitializedSearch(createdService, embeddingModelBacked, embeddingFallbackReason, initializationMillis)
+                    .also { initialized = it }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {

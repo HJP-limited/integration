@@ -27,6 +27,8 @@ local.properties
 !app/src/main/assets/ocr/kie_tokenizer.onnx
 !app/src/main/assets/ocr/textline_ori.onnx
 models/
+# Kotlin installation code is not a model artifact.
+!app/src/main/java/com/example/hjp/models/
 app/src/main/assets/models/*
 !app/src/main/assets/models/.gitkeep
 app/src/main/assets/tokenizer/*

@@ -85,8 +85,6 @@ class AgentKernel(
      * did before: no sentence names anybody, and every existing rule decides the turn.
      */
     private val contactDirectory: ContactDirectory = ContactDirectory.None,
-    /** Production default: a resolved explicit detail read owns its validated display lookup. */
-    private val resolvedDetailOwnership: Boolean = true,
     /**
      * Where this kernel records what it actually did.
      *
@@ -431,7 +429,8 @@ class AgentKernel(
                 ?.cardId
                 ?.takeIf {
                     groundedReplacement ||
-                        (pendingNewTarget && turnTarget is TurnContactTargetResolver.Target.None)
+                        ((pendingNewTarget || (route as? TurnRoutePlan.Continue)?.namedTargetAcquisition == true) &&
+                            turnTarget is TurnContactTargetResolver.Target.None)
                 }
             (turnTarget as? TurnContactTargetResolver.Target.Confirmed)
                 ?.let { workflow.seedTrustedContactProvenance(it.cardId) }
@@ -507,33 +506,10 @@ class AgentKernel(
             // Whether an *actual model* answered is a separate question, counted separately, by
             // [com.hjp.agent.contract.CountingAgentModelGateway].
             runtimeCounters.recordModelBoundaryTurn()
-            val ownedDetailCall = if (
-                resolvedDetailOwnership &&
-                isResolvedExplicitDetailFetch(
-                    normalized = normalized,
-                    dialogueAct = dialogueAct,
-                    route = route,
-                    currentTarget = currentTarget,
-                    session = session,
-                )
-            ) {
-                val contract = snapshot.contractsByModelName[AgentWorkflowSession.GET_CONTACT]
-                contract?.let {
-                    ModelToolCall(
-                        callId = UUID.randomUUID().toString(),
-                        modelToolName = AgentWorkflowSession.GET_CONTACT,
-                        arguments = buildJsonObject {
-                            put("card_id", currentTarget!!.cardId)
-                            put("purpose", "display")
-                        },
-                    )
-                }
-            } else null
             // Establish this turn in the gateway before delivering acquisition results. Both the
             // native protocol and the local parser need the user request to continue downstream.
             // The typed search obligation is carried in capability context below.
-            var decision = ownedDetailCall?.let { ModelDecision.ToolCalls(listOf(it)) }
-                ?: model.decide(ModelInput.User(
+            val modelUserInput = ModelInput.User(
                     text = modelText,
                         safeCapabilityContext = buildCapabilityContext(
                             session,
@@ -547,7 +523,10 @@ class AgentKernel(
                         ),
                     promptContext = promptContext,
                     turnContext = turnContext(modelText, groundedCardId),
-                ))
+                )
+            // ContactDetail already has a deterministic fresh-read path above. All remaining
+            // turns must establish native user context before any tool response can be sent.
+            var decision = model.decide(modelUserInput)
             // A native inference cannot be interrupted, so the first thing to check when it returns
             // is whether the session it belongs to still exists.
             if (lease.isStale()) return@withLock
@@ -973,27 +952,6 @@ class AgentKernel(
                 }
             }
         }
-    }
-
-    private fun isResolvedExplicitDetailFetch(
-        normalized: String,
-        dialogueAct: com.hjp.agent.contract.DialogueAct,
-        route: TurnRoutePlan,
-        currentTarget: CurrentContactTarget?,
-        session: AgentSession,
-    ): Boolean {
-        if (currentTarget == null || dialogueAct == com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH ||
-            dialogueAct == com.hjp.agent.contract.DialogueAct.CORRECTION ||
-            route is TurnRoutePlan.CorrectionReplacement ||
-            (route as? TurnRoutePlan.GroundedContact)?.replacesPreviousTarget == true ||
-            session.conversationMemory.candidateContacts.size > 1 &&
-                session.conversationMemory.selectedContact == null
-        ) return false
-        val text = normalized.replace(Regex("\\s+"), " ").trim().lowercase()
-        if (listOf("메일", "이메일", "작 일정", "캘린더", "일정", "미팅", "회의", "compose", "업데이트", "수정", "변경", "저장").any(text::contains)) return false
-        val detail = listOf("상세", "연락처", "전화번호", "이메일", "메일 주소", "명함 정보", "주소")
-        val fetch = listOf("보여", "알려", "조회", "확인", "찾아")
-        return detail.any(text::contains) && fetch.any(text::contains)
     }
 
     /**
