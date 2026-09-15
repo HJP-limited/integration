@@ -68,6 +68,15 @@ object ToolResultProjector {
         if (memory.selectedContact == null && memory.groundedTargetIdentity == null) memory
         else memory.copy(selectedContact = null, groundedTargetIdentity = null)
 
+    /**
+     * Retires a previous candidate list when a distinct explicit name starts a new acquisition.
+     * Mentions remain available for historical references, but stale candidates must not compete
+     * with the new search or satisfy the ambiguity guard.
+     */
+    fun retireCandidates(memory: ConversationMemory): ConversationMemory =
+        if (memory.candidateContacts.isEmpty()) memory
+        else memory.copy(candidateContacts = emptyList())
+
     /** Retains only the identity established by a deterministic route; no verified fields. */
     fun persistGroundedTarget(
         memory: ConversationMemory,

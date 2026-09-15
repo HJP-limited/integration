@@ -27,6 +27,12 @@ data class TurnDiagnostics(
     val promptTokensEstimated: Int,
     val nativeContext: NativeContextSnapshot,
     val staleAborted: Boolean,
+    val routeSearchRequired: Boolean = false,
+    val routeSearchQueryPresent: Boolean = false,
+    val directoryMatchCount: Int = 0,
+    val runtimeStage: String = "unknown",
+    val nameCandidateCount: Int = 0,
+    val personMarkedCandidateCount: Int = 0,
 ) {
     fun asMap(): Map<String, String> = mapOf(
         "kernel_mode" to kernelMode.name,
@@ -44,6 +50,12 @@ data class TurnDiagnostics(
         "native_total_tokens" to nativeContext.totalTokens.toString(),
         "native_rotations" to nativeContext.rotations.toString(),
         "stale_aborted" to staleAborted.toString(),
+        "route_search_required" to routeSearchRequired.toString(),
+        "route_search_query_present" to routeSearchQueryPresent.toString(),
+        "directory_match_count" to directoryMatchCount.toString(),
+        "runtime_stage" to runtimeStage,
+        "name_candidate_count" to nameCandidateCount.toString(),
+        "person_marked_candidate_count" to personMarkedCandidateCount.toString(),
     )
 }
 

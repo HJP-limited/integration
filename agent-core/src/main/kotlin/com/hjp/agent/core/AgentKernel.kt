@@ -97,6 +97,8 @@ class AgentKernel(
      */
     val runtimeCounters: com.hjp.agent.contract.AgentRuntimeCounters =
         com.hjp.agent.contract.AgentRuntimeCounters(),
+    /** Evaluation-only hook for preserving model-session initialization diagnostics. */
+    private val modelSessionFailureObserver: ((Throwable) -> Unit)? = null,
 ) : AgentTurnEngine {
     override val mode = AgentKernelMode.REACT
 
@@ -183,7 +185,15 @@ class AgentKernel(
             // without ever reaching the later call. A turn that ended deterministically used to
             // leave the previous turn's record in place, so anything reading the diagnostics saw a
             // decision belonging to a different turn. The richer calls further down overwrite this.
-            recordDiagnostics(turnId, generation, route, dialogueAct, emptyList(), emptyList(), 0, null, false)
+            recordDiagnostics(
+                turnId, generation, route, dialogueAct, emptyList(), emptyList(), 0, null, false,
+                routeSearchRequired = (route as? TurnRoutePlan.Continue)?.searchRequired == true,
+                routeSearchQueryPresent = !(route as? TurnRoutePlan.Continue)?.searchQuery.isNullOrBlank(),
+                directoryMatchCount = directoryMatches.size,
+                runtimeStage = "route_created",
+                nameCandidateCount = ContactNameCandidates.candidates(normalized).size,
+                personMarkedCandidateCount = ContactNameCandidates.candidates(normalized).count { it.personMarked },
+            )
             // Four of the branches below finish the turn without ever reaching the model, and so
             // does the contact-detail path further down. Counted as deterministic-only turns so a
             // report can state how much of a run the model was actually responsible for, instead of
@@ -306,7 +316,8 @@ class AgentKernel(
                 sessionManager.requireModelSession(snapshot)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                modelSessionFailureObserver?.invoke(error)
                 failTurn("온디바이스 모델을 시작하지 못했습니다.", turnId, normalized, generation, ::emit)
                 return@withLock
             }
@@ -319,6 +330,14 @@ class AgentKernel(
             var callCount = 0
             var protocolCorrections = 0
             val workflow = workflowPolicy.startTurn(modelText, environment.timeZoneId)
+            // A distinct explicit name starts a new acquisition even when an older search left
+            // candidates in memory. Retire that stale list before the ambiguity guard and context
+            // projection; mention history remains intact for later conversational references.
+            if ((route as? TurnRoutePlan.Continue)?.namedTargetAcquisition == true &&
+                session.conversationMemory.candidateContacts.isNotEmpty()
+            ) {
+                sessionManager.retireCandidates()
+            }
             // The router is the authority on whether this turn is a contact search.  Preserve that
             // typed result for the per-turn workflow, which otherwise cannot distinguish a compact
             // person search ("우성씨 찾아줘") from an arbitrary model-initiated search by looking
@@ -326,7 +345,8 @@ class AgentKernel(
             if (dialogueAct == com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH ||
                 route is TurnRoutePlan.CorrectionReplacement ||
                 (dialogueAct == com.hjp.agent.contract.DialogueAct.CORRECTION &&
-                    route is TurnRoutePlan.Continue && route.text.contains("명함 찾아줘"))
+                    route is TurnRoutePlan.Continue && route.text.contains("명함 찾아줘")) ||
+                (route as? TurnRoutePlan.Continue)?.namedTargetAcquisition == true
             ) {
                 workflow.seedContactSearchIntent()
             }
@@ -435,6 +455,10 @@ class AgentKernel(
                         currentTarget?.cardId,
                         suppressSelectedContact = dialogueAct == com.hjp.agent.contract.DialogueAct.CORRECTION &&
                             currentTarget == null,
+                        searchQuery = (route as? TurnRoutePlan.Continue)
+                            ?.takeIf { it.searchRequired }?.searchQuery,
+                        namedTargetAcquisition = (route as? TurnRoutePlan.Continue)
+                            ?.namedTargetAcquisition == true,
                     ),
                 strategy = turnPolicy.historyStrategy,
                 nativeConversationTurns = nativeConversationTurns,
@@ -458,6 +482,12 @@ class AgentKernel(
             recordDiagnostics(
                 turnId, generation, route, dialogueAct, emptyList(),
                 promptContext.sections.map { it.name }, promptContext.estimatedTokens, null, false,
+                routeSearchRequired = (route as? TurnRoutePlan.Continue)?.searchRequired == true,
+                routeSearchQueryPresent = !(route as? TurnRoutePlan.Continue)?.searchQuery.isNullOrBlank(),
+                directoryMatchCount = directoryMatches.size,
+                runtimeStage = "model_context",
+                nameCandidateCount = ContactNameCandidates.candidates(normalized).size,
+                personMarkedCandidateCount = ContactNameCandidates.candidates(normalized).count { it.personMarked },
             )
 
             // Bounded repair state. `lastToolCallId` is the channel a continuation is sent on: a
@@ -499,6 +529,9 @@ class AgentKernel(
                     )
                 }
             } else null
+            // Establish this turn in the gateway before delivering acquisition results. Both the
+            // native protocol and the local parser need the user request to continue downstream.
+            // The typed search obligation is carried in capability context below.
             var decision = ownedDetailCall?.let { ModelDecision.ToolCalls(listOf(it)) }
                 ?: model.decide(ModelInput.User(
                     text = modelText,
@@ -507,6 +540,10 @@ class AgentKernel(
                             currentTarget?.cardId,
                             suppressSelectedContact = dialogueAct == com.hjp.agent.contract.DialogueAct.CORRECTION &&
                                 currentTarget == null,
+                            searchQuery = (route as? TurnRoutePlan.Continue)
+                                ?.takeIf { it.searchRequired }?.searchQuery,
+                            namedTargetAcquisition = (route as? TurnRoutePlan.Continue)
+                                ?.namedTargetAcquisition == true,
                         ),
                     promptContext = promptContext,
                     turnContext = turnContext(modelText, groundedCardId),
@@ -646,6 +683,12 @@ class AgentKernel(
                             turnId, generation, route, dialogueAct, executedTools,
                             promptContext.sections.map { it.name }, promptContext.estimatedTokens,
                             status.name, false,
+                            routeSearchRequired = (route as? TurnRoutePlan.Continue)?.searchRequired == true,
+                            routeSearchQueryPresent = !(route as? TurnRoutePlan.Continue)?.searchQuery.isNullOrBlank(),
+                            directoryMatchCount = directoryMatches.size,
+                            runtimeStage = "post_model",
+                            nameCandidateCount = ContactNameCandidates.candidates(normalized).size,
+                            personMarkedCandidateCount = ContactNameCandidates.candidates(normalized).count { it.personMarked },
                         )
                         if (isCurrent(generation)) {
                             sessionManager.completeTurn(
@@ -666,6 +709,12 @@ class AgentKernel(
                                 turnId, generation, route, dialogueAct, executedTools,
                                 promptContext.sections.map { it.name }, promptContext.estimatedTokens,
                                 TurnOutcome.COMPLETED.name, false,
+                                routeSearchRequired = (route as? TurnRoutePlan.Continue)?.searchRequired == true,
+                                routeSearchQueryPresent = !(route as? TurnRoutePlan.Continue)?.searchQuery.isNullOrBlank(),
+                                directoryMatchCount = directoryMatches.size,
+                                runtimeStage = "post_model",
+                                nameCandidateCount = ContactNameCandidates.candidates(normalized).size,
+                                personMarkedCandidateCount = ContactNameCandidates.candidates(normalized).count { it.personMarked },
                             )
                             if (isCurrent(generation)) {
                                 sessionManager.completeTurn(
@@ -1015,6 +1064,12 @@ class AgentKernel(
         promptTokens: Int,
         outcome: String?,
         staleAborted: Boolean,
+        routeSearchRequired: Boolean? = null,
+        routeSearchQueryPresent: Boolean? = null,
+        directoryMatchCount: Int? = null,
+        runtimeStage: String = "unknown",
+        nameCandidateCount: Int? = null,
+        personMarkedCandidateCount: Int? = null,
     ) {
         diagnostics.record(TurnDiagnostics(
             kernelMode = mode,
@@ -1040,6 +1095,14 @@ class AgentKernel(
             promptTokensEstimated = promptTokens,
             nativeContext = nativeLedger.snapshot(),
             staleAborted = staleAborted,
+            routeSearchRequired = routeSearchRequired
+                ?: ((route as? TurnRoutePlan.Continue)?.searchRequired == true),
+            routeSearchQueryPresent = routeSearchQueryPresent
+                ?: (!(route as? TurnRoutePlan.Continue)?.searchQuery.isNullOrBlank()),
+            directoryMatchCount = directoryMatchCount ?: 0,
+            runtimeStage = runtimeStage,
+            nameCandidateCount = nameCandidateCount ?: 0,
+            personMarkedCandidateCount = personMarkedCandidateCount ?: 0,
         ))
     }
 
@@ -1084,6 +1147,8 @@ class AgentKernel(
         session: AgentSession,
         actionableCardId: String? = null,
         suppressSelectedContact: Boolean = false,
+        searchQuery: String? = null,
+        namedTargetAcquisition: Boolean = false,
     ) = buildJsonObject {
         val now = System.currentTimeMillis()
         session.capabilityState.entries
@@ -1110,6 +1175,19 @@ class AgentKernel(
                     }
                 }
             }
+        searchQuery?.takeIf { it.isNotBlank() }?.let {
+            putJsonObject("contact_search_obligation") {
+                put("required_tool", "search_contacts")
+                put("search_required", true)
+                put("query", it.replace(Regex("\\s+"), " ").trim())
+            }
+        }
+        if (namedTargetAcquisition) {
+            putJsonObject("named_target_search_guidance") {
+                put("required_tool", "search_contacts")
+                put("instruction", "대상이 아직 확정되지 않았습니다. 먼저 search_contacts를 호출하세요.")
+            }
+        }
     }
 
     private fun policyFailureResult(

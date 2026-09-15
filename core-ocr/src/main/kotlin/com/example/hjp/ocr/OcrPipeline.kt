@@ -58,23 +58,35 @@ class OcrPipeline(assets: OcrAssets) : AutoCloseable {
     val textLineOrientationEnabled: Boolean get() = textLineOrientation != null
 
     init {
-        val opts = OrtSession.SessionOptions()
-        det = env.createSession(assets.require("det.onnx"), opts)
-        rec = env.createSession(assets.require("rec.onnx"), opts)
-        // 없으면 null 이고 그 단계만 빠진다 — 모델 파일이 배치되지 않아도 촬영은 돌아야 한다.
-        textLineOrientation = TextLineOrientation.createOrNull(env, assets)
-        charset = buildList {
-            add("<blank>")
-            val dict = assets.text("korean_dict.txt")
-                ?: throw IllegalStateException("OCR asset not found: korean_dict.txt")
-            // **끝의 빈 줄을 버린다.** 사전 파일이 개행으로 끝나는데 lineSequence() 는 그 뒤의
-            // 빈 문자열도 한 항목으로 내놓는다(파이썬 splitlines() 는 안 그런다). 그 한 칸이
-            // 공백 문자의 번호를 밀어내서, 인식된 공백이 전부 빈 문자열이 됐다 —
-            // "경기도 성남시 분당구" 가 "경기도성남시분당구" 로 저장됐고, FTS 는 공백에서
-            // 자르므로 주소가 통째로 낱말 하나가 됐다.
-            dict.lineSequence().forEach { line -> if (line.isNotEmpty()) add(line) }
-            // 마지막 항목이 공백이다. 인식기의 charset 은 blank + 사전 + 공백 순서다.
-            add(" ")
+        val opened = mutableListOf<AutoCloseable>()
+        try {
+            val opts = OrtSession.SessionOptions()
+            try {
+                det = env.createSession(assets.require("det.onnx"), opts).also { opened.add(it) }
+                rec = env.createSession(assets.require("rec.onnx"), opts).also { opened.add(it) }
+            } finally {
+                opts.close()
+            }
+            // 없으면 null 이고 그 단계만 빠진다 — 모델 파일이 배치되지 않아도 촬영은 돌아야 한다.
+            textLineOrientation = TextLineOrientation.createOrNull(env, assets)?.also { opened.add(it) }
+            charset = buildList {
+                add("<blank>")
+                val dict = assets.text("korean_dict.txt")
+                    ?: throw IllegalStateException("OCR asset not found: korean_dict.txt")
+                // **끝의 빈 줄을 버린다.** 사전 파일이 개행으로 끝나는데 lineSequence() 는 그 뒤의
+                // 빈 문자열도 한 항목으로 내놓는다(파이썬 splitlines() 는 안 그런다). 그 한 칸이
+                // 공백 문자의 번호를 밀어내서, 인식된 공백이 전부 빈 문자열이 됐다 —
+                // "경기도 성남시 분당구" 가 "경기도성남시분당구" 로 저장됐고, FTS 는 공백에서
+                // 자르므로 주소가 통째로 낱말 하나가 됐다.
+                dict.lineSequence().forEach { line -> if (line.isNotEmpty()) add(line) }
+                // 마지막 항목이 공백이다. 인식기의 charset 은 blank + 사전 + 공백 순서다.
+                add(" ")
+            }
+        } catch (failure: Throwable) {
+            opened.asReversed().forEach { resource ->
+                runCatching { resource.close() }.exceptionOrNull()?.let(failure::addSuppressed)
+            }
+            throw failure
         }
     }
 

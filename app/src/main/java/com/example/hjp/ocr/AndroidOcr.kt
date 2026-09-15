@@ -40,9 +40,9 @@ class AndroidOcr private constructor(
 
     fun read(bitmap: Bitmap): Result {
         val bgr = Mat()
-        Utils.bitmapToMat(bitmap, bgr) // RGBA
-        Imgproc.cvtColor(bgr, bgr, Imgproc.COLOR_RGBA2BGR)
         return try {
+            Utils.bitmapToMat(bitmap, bgr) // RGBA
+            Imgproc.cvtColor(bgr, bgr, Imgproc.COLOR_RGBA2BGR)
             val regions = pipeline.run(bgr)
             // 이미지 크기를 넘긴다 — 줄바꿈된 주소를 합칠 때 "같은 열인가" 를 이미지
             // 너비에 대한 비율로 보기 때문이다. 검출 상자에서 되짚으면 오른쪽 끝 글상자가

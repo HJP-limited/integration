@@ -273,6 +273,34 @@ class ContactPluginsTest {
     }
 
     @Test
+    fun `failed vector persistence is retried before publishing the search snapshot`() = runBlocking {
+        var writes = 0
+        val repository = object : EmbeddingFixtureRepository(listOf(
+            BusinessCardRecord("room-new", "New Person", memo = "AI"),
+        )) {
+            override suspend fun upsertEmbeddings(embeddings: List<StoredCardEmbedding>) {
+                writes += 1
+                check(writes > 1) { "simulated storage failure" }
+                super.upsertEmbeddings(embeddings)
+            }
+        }
+        val backend = RyeongContactSearchBackend(
+            repository,
+            embeddingEngineFactory = { OnDeviceEmbeddingEngine.required(TestEmbeddingGemma()) },
+            requireModelBacked = true,
+        )
+        val first = runCatching { backend.search("AI", 5) }
+        assertTrue(first.exceptionOrNull() is IllegalStateException)
+        assertTrue(repository.embeddings.isEmpty())
+        assertFalse(backend.configurationAvailable())
+
+        assertEquals("room-new", backend.search("AI", 5).hits.first().card.id)
+        assertEquals(2, writes)
+        assertEquals(1, repository.embeddings.size)
+        assertTrue(backend.configurationAvailable())
+    }
+
+    @Test
     fun `get rejects a card id that no longer resolves in room repository`() = runBlocking {
         val card = BusinessCardRecord("room-stale", "김지원")
         var available = true
@@ -304,7 +332,7 @@ class ContactPluginsTest {
             override suspend fun getById(cardId: String) = cards.firstOrNull { it.id == cardId }
         }
 
-    private class EmbeddingFixtureRepository(
+    private open class EmbeddingFixtureRepository(
         cards: List<BusinessCardRecord>,
     ) : BusinessCardRepository, BusinessCardEmbeddingStore {
         private val cards = cards.toMutableList()

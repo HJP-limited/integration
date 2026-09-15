@@ -177,13 +177,16 @@ class RyeongContactSearchBackend(
                     embeddingModelBacked = embeddingEngine.isModelBacked
                     embeddingFallbackReason =
                         if (embeddingModelBacked) "" else embeddingEngine.diagnosticStatus()
-                    service = it
                 }
                 if (embeddingModelBacked && embeddingStore != null) {
                     embeddingStore.upsertEmbeddings(
                         snapshot.allEmbeddings().map { it.toStoredEmbedding() },
                     )
                 }
+                // Publish only after persistence succeeds. A failed write must leave initialization
+                // retryable instead of returning an unpersisted snapshot on the next call.
+                initializationFailed = false
+                service = createdService
                 createdService
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -213,6 +213,16 @@ suspend fun AgentSessionStore.retireActionableFocus() {
     }
 }
 
+/** Retires stale candidate results while preserving mention history for later reference. */
+suspend fun AgentSessionStore.retireCandidates() {
+    update { session ->
+        session.conversationMemory = ToolResultProjector.retireCandidates(session.conversationMemory)
+        // The prompt and reference resolver also read capability state. Clearing only typed
+        // memory would leave the old candidate list actionable through that second path.
+        session.capabilityState.remove(SessionStateKey("contact", "last_search_results"))
+    }
+}
+
 class AgentSessionManager(
     private val store: AgentSessionStore,
     private val modelGateway: AgentModelGateway,
@@ -278,6 +288,8 @@ class AgentSessionManager(
 
     /** Retires the focus as a target while leaving the conversation's mention history intact. */
     suspend fun retireActionableFocus() = store.retireActionableFocus()
+
+    suspend fun retireCandidates() = store.retireCandidates()
 
     suspend fun persistGroundedTarget(candidate: ContactCandidate) =
         store.persistGroundedTarget(candidate)

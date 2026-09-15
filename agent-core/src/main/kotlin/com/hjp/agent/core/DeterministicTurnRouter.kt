@@ -436,6 +436,27 @@ object DeterministicTurnRouter {
                     (raw.contains(match.span) || raw.noSpaces().contains(match.name.noSpaces()))
             }
             ?.let { match ->
+                // A directory hit is only a name match.  If this turn has no authoritative
+                // actionable focus yet, keep the explicit downstream request on the typed
+                // acquisition path instead of pinning the match as ROUTER_GROUNDED.  This is
+                // intentionally the same helper used by directoryLookup(), so the A-50/A-52
+                // obligation and ownership boundary remain the single source of truth.
+                unresolvedNamedTargetAcquisition(
+                    raw,
+                    context,
+                    includeSearchIntent = true,
+                    explicitQuery = match.name,
+                )?.let { query ->
+                    return Decision(
+                        actOf(raw, context),
+                        TurnRoutePlan.Continue(
+                            raw,
+                            searchRequired = true,
+                            searchQuery = query,
+                            namedTargetAcquisition = true,
+                        ),
+                    )
+                }
                 return Decision(
                     directoryActionAct,
                     TurnRoutePlan.GroundedContact(
@@ -943,7 +964,12 @@ object DeterministicTurnRouter {
         val hasAttribute = listOf(
             "회사", "주식회사", "(주)", "㈜", "소속", "직장", "부서", "팀", "직함", "직급", "직책", "직위",
             "대표", "이사", "부장", "과장", "차장", "대리", "사원", "매니저", "디자이너", "엔지니어",
+            // Executive abbreviations and professional roles are attributes too. Keep them behind
+            // the explicit search + people gates above so explanatory questions do not become
+            // directory searches (e.g. "CMO가 뭐야?", "변호사는 무슨 일을 해?").
             "designer", "manager", "engineer", "developer", "director", "lead", "head", "chief", "officer",
+            "cdo", "cmo", "cto", "ceo", "cio", "cfo", "변호사", "회계사", "세무사", "노무사", "변리사",
+            "의사", "간호사", "교수", "컨설턴트", "기획자", "개발자", "연구원", "디렉터", "실장", "전무", "상무",
         ).any(raw.lowercase()::contains)
         // 저장소가 직함이라고 답한 말이 문장에 있으면 그것만으로 속성 검색이다.
         //
@@ -1041,8 +1067,19 @@ object DeterministicTurnRouter {
             it.identifiesAPerson &&
                 (raw.contains(it.span) || raw.noSpaces().contains(it.name.noSpaces())) &&
                 (priorId == null || it.cardIds.any { id -> id != priorId })
-        }
+            }
             ?: run {
+                // A named downstream request still needs acquisition when the directory cannot
+                // ground the person locally. Keep this as a typed search obligation rather than
+                // choosing a target: the search result remains authoritative.
+                unresolvedNamedTargetAcquisition(raw, context)?.let { query ->
+                    return TurnRoutePlan.Continue(
+                        raw,
+                        searchRequired = true,
+                        searchQuery = query,
+                        namedTargetAcquisition = true,
+                    )
+                }
                 // A directory miss is not evidence that the utterance is ambiguous.  For an
                 // explicit search request, preserve the best name-shaped candidate as a search
                 // request and let the search tool establish the candidate set.  This is important
@@ -1063,7 +1100,7 @@ object DeterministicTurnRouter {
                 // preserve the user's attribute query for the model/search executor. Generic name
                 // searches continue through the existing name-shaped fallback below.
                 if (isExplicitAttributeSearch(raw, context)) {
-                    return TurnRoutePlan.Continue(raw)
+                    return TurnRoutePlan.Continue(raw, searchRequired = true, searchQuery = raw)
                 }
                 // 장소를 가리키는 말이 있으면 이름 찾기로 바꾸지 않는다.
                 //
@@ -1088,6 +1125,25 @@ object DeterministicTurnRouter {
                     ?: return TurnRoutePlan.Continue(raw)
                 return TurnRoutePlan.Continue("${candidate.span} 명함 찾아줘")
             }
+        // A directory hit is not by itself an actionable target: the store may have identified a
+        // name, while this turn is asking to contact that person and no target has been promoted
+        // into session memory yet. Reuse the same typed acquisition obligation as the directory-miss
+        // path, but only for explicit named downstream requests. This preserves the match branch for
+        // resolved detail/search and all existing correction/reference/attribute boundaries.
+        // A directory hit is only a name match.  For a fresh explicit search request it is not
+        // authoritative target acquisition, so keep the turn on the typed acquisition path rather
+        // than promoting the hit to ROUTER_GROUNDED.  Downstream contact/compose requests use the
+        // same helper; allowing search-only requests here closes the equivalent match-branch gap.
+        unresolvedNamedTargetAcquisition(
+            raw,
+            context,
+            includeSearchIntent = true,
+            explicitQuery = match.name,
+        )?.let { query ->
+            return TurnRoutePlan.Continue(
+                raw, searchRequired = true, searchQuery = query, namedTargetAcquisition = true,
+            )
+        }
         val terms = listOf(match.span, match.name).distinct().filter(String::isNotBlank)
         val rewritten = "${terms.joinToString(" ")} 명함 찾아줘"
         if (!asksAboutADirectoryContact(raw, context)) return TurnRoutePlan.Continue(raw)
@@ -1108,6 +1164,33 @@ object DeterministicTurnRouter {
                 replacesPreviousTarget = prior != null,
             ).plan
         } else TurnRoutePlan.Continue(rewritten)
+    }
+
+    /** Explicit person + contact-bound downstream action, with no existing actionable focus. */
+    private fun unresolvedNamedTargetAcquisition(
+        raw: String,
+        context: TurnContext,
+        includeSearchIntent: Boolean = false,
+        explicitQuery: String? = null,
+    ): String? {
+        val namesDifferentFocus = context.memory.selectedContact?.let { focus ->
+            !raw.noSpaces().contains(focus.name.noSpaces())
+        } == true
+        if (context.memory.selectedContact != null && !(includeSearchIntent && namesDifferentFocus)) return null
+        val hasOnlyStaleCandidates = context.memory.candidateContacts.isNotEmpty() &&
+            includeSearchIntent &&
+            context.memory.candidateContacts.none { raw.noSpaces().contains(it.name.noSpaces()) }
+        if (context.memory.candidateContacts.isNotEmpty() && !hasOnlyStaleCandidates) return null
+        if (isHistoricalRecall(raw) || conversationScopeMarkers.any(raw::contains)) return null
+        // Field questions (including names that contain action words) are reads, not compose
+        // requests. Use the same name-aware classification as the action branch above.
+        val downstream = actOf(raw, context) in setOf(
+            DialogueAct.ACTION_COMPOSE, DialogueAct.ACTION_CALENDAR, DialogueAct.ACTION_UPDATE,
+        ) || (raw.contains("연락") && !asksAboutADirectoryContact(raw, context))
+        if (!downstream && !(includeSearchIntent && ContactReadIntent.hasSearchVerb(raw))) return null
+        return explicitQuery?.takeIf { it.isNotBlank() } ?: ContactNameCandidates.candidates(raw)
+            .firstOrNull { it.personMarked }
+            ?.span
     }
 
     /** Does this sentence name something this agent can actually do? */

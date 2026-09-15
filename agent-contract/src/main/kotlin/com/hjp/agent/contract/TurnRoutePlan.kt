@@ -9,7 +9,13 @@ package com.hjp.agent.contract
  */
 sealed interface TurnRoutePlan {
     /** Nothing in memory was needed; continue normal parsing on [text]. */
-    data class Continue(val text: String) : TurnRoutePlan
+    data class Continue(
+        val text: String,
+        val searchRequired: Boolean = false,
+        val searchQuery: String? = null,
+        /** True only for unresolved explicit person-name acquisition, never attribute search. */
+        val namedTargetAcquisition: Boolean = false,
+    ) : TurnRoutePlan
 
     /**
      * A reference such as "방금 찾은 사람" resolved to a tool-verified contact. [requiresFreshRead]

@@ -2,6 +2,10 @@ package com.hjp.agent.core
 
 import com.hjp.agent.contract.ConversationMemory
 import com.hjp.agent.contract.ContactCandidate
+import com.hjp.tool.contract.ContractVersion
+import com.hjp.tool.contract.SessionStateKey
+import com.hjp.tool.contract.StoredSessionState
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -10,6 +14,33 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ToolResultProjectorTargetTest {
+    @Test
+    fun `new acquisition retires both candidate stores but preserves other memory`() = runBlocking {
+        val store = InMemoryAgentSessionStore()
+        val data = buildJsonObject {
+            put("results", buildJsonArray {
+                add(result("S1", "김민", "이름 일치"))
+                add(result("S2", "김민", "이름 일치"))
+            })
+        }
+        val memory = ToolResultProjector.project(ConversationMemory(), "search_contacts", data, 1L)
+        val searchKey = SessionStateKey("contact", "last_search_results")
+        val unrelatedKey = SessionStateKey("calendar", "draft")
+        val state = StoredSessionState(ContractVersion(1, 0), data)
+        store.update {
+            it.conversationMemory = memory
+            it.capabilityState[searchKey] = state
+            it.capabilityState[unrelatedKey] = state
+        }
+
+        store.retireCandidates()
+
+        val session = store.getOrCreate()
+        assertEquals(memory.copy(candidateContacts = emptyList()), session.conversationMemory)
+        assertNull(session.capabilityState[searchKey])
+        assertEquals(state, session.capabilityState[unrelatedKey])
+    }
+
     @Test
     fun `multiple search results remain ambiguous even with one exact hit`() {
         val data = buildJsonObject {

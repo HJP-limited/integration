@@ -5,6 +5,7 @@ import com.hjp.agent.contract.ContactReference
 import com.hjp.agent.contract.ContactSelectionBasis
 import com.hjp.agent.contract.ConversationMemory
 import com.hjp.agent.contract.DialogueAct
+import com.hjp.agent.contract.DirectoryNameMatch
 import com.hjp.agent.contract.MemoryProvenance
 import com.hjp.agent.contract.ModelConversationRole
 import com.hjp.agent.contract.TranscriptEntry
@@ -59,6 +60,24 @@ class RouterGeneralizationTest {
     }
 
     @Test
+    fun `executive and professional role searches seed contact search without catching explanations`() {
+        listOf(
+            "CDO 사람 찾아줘",
+            "CMO 사람 찾아줘",
+            "파트너 변호사 사람 찾아줘",
+        ).forEach {
+            assertEquals(it, DialogueAct.CONTACT_SEARCH, DeterministicTurnRouter.act(context(it)))
+        }
+        listOf(
+            "CDO가 뭐야?",
+            "CMO 역할이 뭐야?",
+            "변호사는 무슨 일을 해?",
+        ).forEach {
+            assertTrue(it, DeterministicTurnRouter.act(context(it)) != DialogueAct.CONTACT_SEARCH)
+        }
+    }
+
+    @Test
     fun `attribute questions and vague contact phrases do not seed search`() {
         listOf(
             "회사 정보 알려줘",
@@ -71,6 +90,116 @@ class RouterGeneralizationTest {
                 DeterministicTurnRouter.act(context(it)) != DialogueAct.CONTACT_SEARCH,
             )
         }
+    }
+
+    @Test
+    fun `unresolved named downstream requests seed acquisition search`() {
+        listOf(
+            "표지연씨한테 연락하려고",
+            "제가온씨한테 연락하려고",
+            "조정우씨한테 연락하려고",
+            "변민재씨한테 연락하려고",
+            "백다인씨한테 연락하려고",
+            "주정우씨한테 연락하려고",
+            "백다인씨한테 이메일 보내줘",
+            "조정우씨에게 문자 보내줘",
+        ).forEach { text ->
+            val plan = DeterministicTurnRouter.route(context(text))
+            assertTrue(text, plan is TurnRoutePlan.Continue)
+            assertTrue(text, (plan as TurnRoutePlan.Continue).searchRequired)
+            assertTrue(text, plan.searchQuery?.contains(text.substringBefore("씨")) == true)
+        }
+    }
+
+    @Test
+    fun `directory match does not suppress unresolved named acquisition`() {
+        val plan = DeterministicTurnRouter.route(
+            context(
+                "변민재씨한테 연락하려고",
+                directoryMatches = listOf(
+                    DirectoryNameMatch("변민재씨", "변민재", listOf("S001"), personMarked = true, alsoNonPersonVocabulary = false),
+                ),
+            ),
+        ) as TurnRoutePlan.Continue
+        assertTrue(plan.searchRequired)
+        assertTrue(plan.searchQuery == "변민재" || plan.searchQuery == "변민재씨")
+        assertTrue(plan.namedTargetAcquisition)
+    }
+
+    @Test
+    fun `directory match downstream action with stale candidates uses acquisition path`() {
+        val plan = DeterministicTurnRouter.route(
+            context(
+                "하현씨 찾아서 메일 초안까지 열어줘",
+                memory = ConversationMemory(
+                    candidateContacts = listOf(
+                        ContactCandidate("S02657", "용지호"),
+                        ContactCandidate("S03535", "원지영"),
+                    ),
+                ),
+                directoryMatches = listOf(
+                    DirectoryNameMatch("하현씨", "하현", listOf("S00050"), personMarked = true, alsoNonPersonVocabulary = false),
+                ),
+            ),
+        ) as TurnRoutePlan.Continue
+
+        assertTrue(plan.namedTargetAcquisition)
+        assertTrue(plan.searchRequired)
+        assertEquals("하현", plan.searchQuery)
+    }
+
+    @Test
+    fun `directory match does not promote a fresh explicit search to an actionable target`() {
+        val plan = DeterministicTurnRouter.route(
+            context(
+                "박지훈씨도 찾아줘",
+                directoryMatches = listOf(
+                    DirectoryNameMatch("박지훈씨", "박지훈", listOf("S03200"), personMarked = true, alsoNonPersonVocabulary = false),
+                ),
+            ),
+        ) as TurnRoutePlan.Continue
+
+        assertTrue(plan.namedTargetAcquisition)
+        assertTrue(plan.searchRequired)
+        assertTrue(plan.searchQuery == "박지훈" || plan.searchQuery == "박지훈씨")
+    }
+
+    @Test
+    fun `a distinct explicit search retires stale candidates before acquisition`() {
+        val memory = ConversationMemory(
+            candidateContacts = listOf(
+                ContactCandidate("S01448", "구준서"),
+                ContactCandidate("S00615", "채준서"),
+            ),
+        )
+        val plan = DeterministicTurnRouter.route(
+            context(
+                "박지훈씨도 찾아줘",
+                memory = memory,
+                directoryMatches = listOf(
+                    DirectoryNameMatch("박지훈씨", "박지훈", listOf("S03200"), personMarked = true, alsoNonPersonVocabulary = false),
+                ),
+            ),
+        ) as TurnRoutePlan.Continue
+
+        assertTrue(plan.namedTargetAcquisition)
+        assertTrue(plan.searchRequired)
+        assertTrue(plan.searchQuery == "박지훈" || plan.searchQuery == "박지훈씨")
+    }
+
+    @Test
+    fun `attribute search is not marked as named acquisition`() {
+        val plan = DeterministicTurnRouter.route(context("개발팀 사람 검색해줘")) as TurnRoutePlan.Continue
+        assertTrue(plan.searchRequired)
+        assertTrue(!plan.namedTargetAcquisition)
+    }
+
+    @Test
+    fun `named acquisition does not activate for resolved or recall states`() {
+        val resolved = DeterministicTurnRouter.route(context("구도윤씨한테 메일 보내려고 해", memory = focus()))
+        assertTrue(resolved !is TurnRoutePlan.Continue || !(resolved as TurnRoutePlan.Continue).searchRequired)
+        val recall = DeterministicTurnRouter.route(context("그 사람 메일 주소가 뭐였지?"))
+        assertTrue(recall !is TurnRoutePlan.Continue || !(recall as TurnRoutePlan.Continue).searchRequired)
     }
 
     @Test
@@ -255,7 +384,8 @@ class RouterGeneralizationTest {
         text: String,
         memory: ConversationMemory = ConversationMemory(),
         transcript: List<TranscriptEntry> = emptyList(),
-    ) = TurnContext(text, memory, transcript, TOOLS)
+        directoryMatches: List<DirectoryNameMatch> = emptyList(),
+    ) = TurnContext(text, memory, transcript, TOOLS, directoryMatches = directoryMatches)
 
     private fun transcript(vararg pairs: Pair<ModelConversationRole, String>) =
         pairs.mapIndexed { index, (role, text) -> TranscriptEntry("t$index", role, text, index.toLong()) }
