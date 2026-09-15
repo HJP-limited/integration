@@ -13,8 +13,8 @@ import java.security.MessageDigest
 /**
  * Ryeong llm-integration-work의 실기기 검증 경로를 현재 검색 코어에 연결한다.
  *
- * 모델은 APK에 추가하지 않는다. 앱 내부/외부 models 디렉터리의 두 파일을 모두
- * 확인한 뒤에만 초기화하며, 실패 상태는 [diagnosticStatus]로 상위 fallback에 전달한다.
+ * APK에 필수 모델 두 파일을 포함하며 해시 검증 후 앱 내부 저장소에 준비한다.
+ * 로드 실패는 검색 중단으로 전달하며 키워드 폴백으로 대체하지 않는다.
  */
 class AndroidEmbeddingGemmaEngine(context: Context) : EmbeddingEngine, AutoCloseable {
     private val appContext = context.applicationContext

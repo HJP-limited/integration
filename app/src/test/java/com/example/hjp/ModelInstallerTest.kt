@@ -88,6 +88,27 @@ class ModelInstallerTest {
             models.getValue("sentencepiece.model").sha256)
     }
 
+    @Test fun `system download is verified then promoted without duplicating model`() = runBlocking {
+        val staged = File(temporary.root, "model.bin.download").apply { writeBytes(bytes) }
+        val installer = ModelInstaller(temporary.root) { error("Promotion must not use network") }
+        assertArrayEquals(bytes, installer.promoteDownload(model()).readBytes())
+        assertFalse(staged.exists())
+    }
+
+    @Test fun `corrupt system download cannot replace existing verified model`() = runBlocking {
+        val existing = File(temporary.root, "model.bin").apply { writeBytes(bytes) }
+        File(temporary.root, "model.bin.download").writeBytes(ByteArray(bytes.size))
+        assertTrue(runCatching { ModelInstaller(temporary.root).promoteDownload(model()) }.isFailure)
+        assertArrayEquals(bytes, existing.readBytes())
+    }
+
+    @Test fun `service only downloads public generative model and bundles embedding pair`() {
+        val manifest = com.example.hjp.models.ModelDownloads
+        assertEquals("hjp-agent.litertlm", manifest.generative.fileName)
+        assertEquals(setOf("embeddinggemma-300m.tflite", "sentencepiece.model"), manifest.bundled.map { it.fileName }.toSet())
+        assertTrue(manifest.generative.url.startsWith("https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/b3ca0d2"))
+    }
+
     private class Response(url: URL, private val bytes: ByteArray, private val status: Int = 200,
         private val headers: Map<String, String> = emptyMap()) : HttpURLConnection(url) {
         var closed = false

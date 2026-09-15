@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -43,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -68,7 +70,6 @@ import com.example.hjp.ui.CardListScreen
 import com.example.hjp.ui.CaptureScreen
 import com.example.hjp.ui.HjpIcons
 import com.example.hjp.ui.HomeScreen
-import com.example.hjp.ui.LoginScreen
 import com.example.hjp.ui.OcrDraft
 import com.example.hjp.ocr.OcrCardMapper
 import com.example.hjp.ui.OcrResultScreen
@@ -85,12 +86,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        intent?.getStringExtra("q")?.let { q ->
+        intent?.takeIf { BuildConfig.DEBUG }?.getStringExtra("q")?.let { q ->
             android.util.Log.i(DIAG_TAG, "onCreate q=$q")
             DebugQuestion.offer(q)
             intent.removeExtra("q")
         }
-        intent?.getStringExtra("test_image_path")?.let { path ->
+        intent?.takeIf { BuildConfig.DEBUG }?.getStringExtra("test_image_path")?.let { path ->
             android.util.Log.i(DIAG_TAG, "onCreate image=$path")
             DebugImage.offer(path)
             intent.removeExtra("test_image_path")
@@ -98,19 +99,9 @@ class MainActivity : ComponentActivity() {
 
         // 에이전트 배선은 프로세스 하나에 하나뿐이다(HjpApplication 이 들고 있다).
         // 액티비티가 다시 만들어져도 같은 세션이 이어지도록 여기서 새로 만들지 않는다.
-        val container = (application as HjpApplication).container
-        val directory = CardDirectory(
-            container.contactRepository,
-            container.directorySearchBackend,
-            container::refreshAfterCardAdded,
-        )
-
         setContent {
             HJPTheme {
-                HjpApp(
-                    container = container,
-                    directory = directory,
-                )
+                ServiceEntry(application as HjpApplication)
             }
         }
     }
@@ -123,6 +114,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (!BuildConfig.DEBUG) return
         val q = intent.getStringExtra("q")
         android.util.Log.i(DIAG_TAG, "onNewIntent q=$q")
         DebugQuestion.offer(q)
@@ -139,6 +131,7 @@ class MainActivity : ComponentActivity() {
      */
     override fun onResume() {
         super.onResume()
+        if (!BuildConfig.DEBUG) return
         intent?.getStringExtra("q")?.let { q ->
             android.util.Log.i(DIAG_TAG, "onResume q=$q")
             intent.removeExtra("q")
@@ -248,19 +241,13 @@ fun HjpApp(
     container: AppContainer,
     directory: CardDirectory,
 ) {
-    // SCR-01. 인증이 없으므로 진짜 관문이 아니라 첫 화면일 뿐이다.
-    //
-    // 초기값을 **구성 시점에** 정한다 — 디버그 인텐트로 들어온 질문이 대기 중이면 로그인
-    // 화면을 아예 거치지 않는다. 예전에는 effect 로 뒤늦게 넘겼는데, 그러면 로그인 화면이
-    // 한 번 그려졌다가 교체되면서 채팅 화면이 처리한 말풍선이 사라졌다(실측).
-    var signedIn by rememberSaveable { mutableStateOf(DebugQuestion.pending != null) }
+    // Local-only service: no simulated account/login screen. Model setup precedes entry.
     var selectedTab by remember { mutableStateOf(AppTab.Home) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     // 디버그 인텐트로 질문이 들어오면 Agent 화면으로 옮긴다 — 그 화면이 떠 있어야
     // 질문이 처리된다(adb 로 탭을 누르는 건 기기에서 잘 안 먹혔다).
     LaunchedEffect(DebugQuestion.pending) {
         if (DebugQuestion.pending != null) {
-            signedIn = true
             selectedTab = AppTab.Agent
             overlay = null
         }
@@ -268,16 +255,11 @@ fun HjpApp(
     // 디버그 인텐트로 이미지가 들어오면 촬영 화면으로 옮긴다 — 그 화면이 떠야 인식이 돈다.
     LaunchedEffect(DebugImage.pending) {
         if (DebugImage.pending != null) {
-            signedIn = true
             selectedTab = AppTab.Capture
             overlay = null
         }
     }
 
-    if (!signedIn) {
-        LoginScreen(onEnter = { signedIn = true }, modifier = Modifier.fillMaxSize())
-        return
-    }
     // 모델 상태는 커널이 실제로 읽은 아티팩트에서 온다 — 파일 이름이 아니라 바이트를
     // 보고 정한 값이라, 파일만 바꿔치기해도 여기 표시가 따라간다.
     val deploymentStatus = if (container.modelReady) {
@@ -627,134 +609,12 @@ private fun TypingBubble(status: String? = null) {
 }
 
 @Composable
-internal fun ModelsScreen(
-    container: AppContainer,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var importMessage by remember { mutableStateOf<String?>(null) }
-    var pendingModelFileName by remember { mutableStateOf(GENERATIVE_MODEL_FILE) }
-    var embeddingChecking by remember { mutableStateOf(false) }
-    var embeddingChecked by remember { mutableStateOf<Boolean?>(null) }
-    var embeddingResult by remember { mutableStateOf<String?>(null) }
-    // 아티팩트 판정은 커널이 파일 **내용**을 보고 한다. 화면은 그 결과만 읽는다 —
-    // 파일 이름으로 판단하면 이름만 바꿔 둔 파일이 통과해 버린다.
-    var snapshot by remember { mutableStateOf(container.diagnosticsSnapshot()) }
-
-    val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val selectedFileName = pendingModelFileName
-        scope.launch {
-            importMessage = selectedFileName + " 복사·검증 중... (파일 크기에 따라 시간이 걸립니다)"
-            val result = withContext(Dispatchers.IO) {
-                runCatching { copyModelToAppStorage(context, uri, selectedFileName) }
-                    .onFailure { if (it is CancellationException) throw it }
-            }
-            result.onSuccess { copied ->
-                importMessage = selectedFileName + " 복사·검증 완료 (" + formatBytes(copied.length()) + ")" +
-                    NEEDS_RESTART_NOTE
-            }.onFailure {
-                importMessage = "복사 실패: " + (it.message ?: it.javaClass.simpleName)
-            }
-            snapshot = container.diagnosticsSnapshot()
-        }
-    }
-
-    val generativeReady = container.modelReady
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("모델 파일 관리", style = MaterialTheme.typography.titleLarge)
+internal fun ModelsScreen(container: AppContainer, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         com.example.hjp.ui.ModelDownloadPanel()
-
-        ModelCard(
-            title = "대화·도구 호출 모델",
-            subtitle = "Gemma 4 E2B (LiteRT-LM) · 파일 이름은 무엇이든 됩니다",
-            role = "질문을 읽고 어떤 도구를 쓸지 고른 뒤 답변을 씁니다. " +
-                "명함 검색·상세 조회·일정·메일이 모두 이 모델의 판단을 거칩니다.",
-            state = if (generativeReady) ModelState.Ready else ModelState.Missing,
-            stateLabel = if (generativeReady) "사용 준비됨" else "모델 파일 없음 — 파일을 가져와 주세요",
-            detail = container.modelFile.absolutePath,
-            onImport = {
-                pendingModelFileName = GENERATIVE_MODEL_FILE
-                modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
-            },
-            checking = false,
-            onCheck = { snapshot = container.diagnosticsSnapshot() },
-            resultText = null,
-        )
-
-        ModelCard(
-            title = "임베딩 모델",
-            subtitle = "EmbeddingGemma 300M · 모델(.tflite) + 토크나이저(sentencepiece.model) 2개 파일 필요",
-            role = "\"판교에서 만난 AI 하는 분\"처럼 문장 뜻으로 명함을 찾습니다. " +
-                "모델이 없거나 실패하면 검색을 중단합니다. 키워드 검색으로 대체하지 않습니다.",
-            // 엔진 이름에 HYBRID가 들어가는지 추측하지 않고 실제 추론 결과로 판정한다.
-            state = when (embeddingChecked) {
-                true -> ModelState.Ready
-                false -> ModelState.Failed
-                null -> ModelState.Missing
-            },
-            stateLabel = embeddingResult ?: "실제 추론 미검증 — 아래 동작 확인을 눌러 주세요",
-            detail = "",
-            onImport = {
-                pendingModelFileName = EMBEDDING_MODEL_FILE
-                modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
-            },
-            checking = embeddingChecking,
-            onCheck = {
-                embeddingChecking = true
-                scope.launch {
-                    try {
-                        embeddingResult = container.checkEmbeddingModel()
-                        embeddingChecked = true
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        embeddingResult = "실행 실패: " + (error.message ?: error.javaClass.simpleName)
-                        embeddingChecked = false
-                    } finally { embeddingChecking = false }
-                    snapshot = container.diagnosticsSnapshot()
-                }
-            },
-            resultText = null,
-            canCheckWithoutReady = true,
-            checkLabel = "동작 확인",
-            secondaryImportLabel = "토크나이저 가져오기",
-            onSecondaryImport = {
-                pendingModelFileName = EMBEDDING_TOKENIZER_FILE
-                modelPicker.launch(arrayOf("application/octet-stream", "*/*"))
-            },
-        )
-
-        importMessage?.let {
-            StatusCard("가져오기", it, ok = !it.startsWith("복사 실패"))
-        }
-
-        Text("진단", style = MaterialTheme.typography.titleMedium)
-        // 이름·주소·프롬프트는 여기 들어오지 않는다(AppContainer.diagnosticsSnapshot 규칙).
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                snapshot.forEach { (k, v) ->
-                    Text(k + " = " + v, style = MaterialTheme.typography.labelSmall)
-                }
-            }
-        }
+        Text(if (container.modelReady) "대화 모델 사용 준비 완료" else "대화 모델 준비가 필요합니다.")
     }
 }
-
-/** 커널이 찾는 생성 모델 파일 이름. [AppContainer.modelFile] 과 같아야 한다. */
-private const val GENERATIVE_MODEL_FILE = "hjp-agent.litertlm"
-private const val EMBEDDING_MODEL_FILE = "embeddinggemma-300m.tflite"
-private const val EMBEDDING_TOKENIZER_FILE = "sentencepiece.model"
-
-/** 아티팩트 판정은 프로세스 시작 때 한 번 한다 — 새 파일은 앱을 다시 열어야 잡힌다. */
-private const val NEEDS_RESTART_NOTE = " — 앱을 강제 종료한 뒤 다시 열어야 반영됩니다."
 
 @Composable
 private fun BusinessCardResultCard(card: BusinessCardRecord, onClick: (() -> Unit)? = null) {
@@ -972,6 +832,30 @@ private suspend fun copyModelToAppStorage(context: Context, uri: Uri, fileName: 
     val model = com.example.hjp.models.ModelDownloads.required.single { it.fileName == fileName }
     return com.example.hjp.models.ModelInstaller(dir).installFrom(model) {
         requireNotNull(context.contentResolver.openInputStream(uri)) { "Could not open selected file." }
+    }
+}
+
+@Composable
+private fun ServiceEntry(application: HjpApplication) {
+    val setup = application.modelSetup
+    val state by setup.state.collectAsState()
+    var container by remember { mutableStateOf<AppContainer?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.ready, setup.termsAccepted) {
+        if (state.ready && setup.termsAccepted) {
+            try { container = withContext(Dispatchers.IO) { application.container } }
+            catch (e: Exception) { error = "AI 초기화에 실패했습니다. 앱을 다시 열어 주세요." }
+        }
+    }
+    val active = container
+    if (active != null) {
+        val directory = remember(active) { CardDirectory(active.contactRepository, active.directorySearchBackend, active::refreshAfterCardAdded) }
+        HjpApp(active, directory)
+    } else Surface(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp)) {
+            com.example.hjp.ui.ModelDownloadPanel()
+            if (state.ready && setup.termsAccepted) Text(error ?: "AI 엔진을 시작하고 있습니다…")
+        }
     }
 }
 

@@ -28,6 +28,8 @@ object ModelDownloads {
         DownloadableModel("hjp-agent.litertlm", GEMMA + "gemma-4-E2B-it.litertlm", 2588147712,
             "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c"),
     )
+    val generative = required.single { it.fileName == "hjp-agent.litertlm" }
+    val bundled = required.filter { it != generative }
 }
 
 /** Screen cancellation retains a resumable .part; only verified bytes replace the final file. */
@@ -140,7 +142,7 @@ class ModelInstaller(
             }
         }
 
-    private suspend fun verified(file: File, model: DownloadableModel): Boolean {
+    suspend fun verified(file: File, model: DownloadableModel): Boolean {
         if (!file.isFile || file.length() != model.size) return false
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
@@ -153,6 +155,19 @@ class ModelInstaller(
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) } == model.sha256
+    }
+
+    /** Promote only the exact app-owned DownloadManager destination after complete verification. */
+    suspend fun promoteDownload(model: DownloadableModel): File = withContext(Dispatchers.IO) {
+        transferMutex.withLock {
+            require(model.fileName == File(model.fileName).name && !model.fileName.contains(".."))
+            val staging = File(directory, model.fileName + ".download")
+            check(verified(staging, model)) { "다운로드 파일 검증에 실패했습니다. 다시 다운로드해 주세요." }
+            currentCoroutineContext().ensureActive()
+            val target = File(directory, model.fileName)
+            Files.move(staging.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            target
+        }
     }
 
     private suspend fun open(address: String, token: String, offset: Long): HttpURLConnection {

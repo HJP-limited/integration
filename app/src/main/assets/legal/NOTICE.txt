@@ -1,0 +1,18 @@
+HJP model distribution notices
+
+EmbeddingGemma 300M and its SentencePiece tokenizer:
+Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms.
+The accompanying Gemma-Terms.txt and Gemma-Prohibited-Use.txt apply to use and distribution.
+HJP requires users to comply with these use restrictions as a condition of using these models.
+Source: https://huggingface.co/litert-community/embeddinggemma-300m
+Pinned revision: 29888fcee3216acadc7e844906e5fe0d79a61875
+Files are distributed byte-for-byte without HJP modifications.
+
+Gemma 4 E2B IT, LiteRT-LM artifact:
+License: Apache License, Version 2.0 (accompanying Apache-2.0.txt).
+Source: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm
+Pinned revision: b3ca0d2f076785a8f4b2219ddbd2bdb99954eae1
+Downloaded directly from the public source without HJP modifications.
+
+Google and upstream contributors retain their respective rights.
+Model names identify the upstream software; no Google endorsement is implied.

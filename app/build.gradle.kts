@@ -1,3 +1,6 @@
+import java.security.MessageDigest
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -59,6 +62,46 @@ android {
         // AppContainer 가 BuildConfig.DEBUG 로 커널 전환 가능 여부를 정한다.
         buildConfig = true
     }
+}
+
+// Missing or altered bundled models fail every build variant, including release.
+abstract class PrepareServiceModelAssets : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val modelFiles: ConfigurableFileCollection
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction fun prepare() {
+        val hashes = mapOf(
+            "embeddinggemma-300m.tflite" to "37115ef7bff76cd37dd86abe503ff511b1032bf85fc624a85c49c84899e92bc5",
+            "sentencepiece.model" to "d6daa52d93d7aad10e8388bd526c4e501d914b47177398d1d9621f1fe48438c7"
+        )
+        val files = modelFiles.files.associateBy { it.name }
+        hashes.forEach { (name, expected) ->
+            val model = files[name]
+            check(model != null && model.isFile) { "Required bundled model missing: $name. Set HJP_MODEL_DIR." }
+            val digest = MessageDigest.getInstance("SHA-256")
+            model.inputStream().use { stream ->
+                val buffer = ByteArray(256 * 1024)
+                while (true) { val count = stream.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
+            }
+            check(digest.digest().joinToString("") { "%02x".format(it) } == expected) { "Bundled model hash mismatch: $name" }
+            val target = outputDirectory.file("models/$name").get().asFile
+            target.parentFile.mkdirs()
+            model.copyTo(target, overwrite = true)
+        }
+    }
+}
+val prepareServiceModelAssets = tasks.register<PrepareServiceModelAssets>("prepareServiceModelAssets") {
+    val source = providers.environmentVariable("HJP_MODEL_DIR").orElse(
+        rootProject.layout.projectDirectory.dir("../HJP_limitededition-main/models").asFile.absolutePath
+    )
+    modelFiles.from(source.map { path -> listOf("embeddinggemma-300m.tflite", "sentencepiece.model").map { File(path, it) } })
+    outputDirectory.set(layout.buildDirectory.dir("generated/serviceModelAssets"))
+}
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(prepareServiceModelAssets) { it.outputDirectory }
 }
 
 dependencies {

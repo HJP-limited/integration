@@ -25,6 +25,7 @@ import android.os.Bundle
  * No keep-alive service is added; nothing is written to disk; no previous session can be restored.
  */
 class HjpApplication : Application() {
+    val modelSetup by lazy { com.example.hjp.models.ServiceModelSetup(this) }
     private var liveActivities = 0
     private var sessionTouched = false
 
@@ -75,8 +76,10 @@ class HjpApplication : Application() {
             if (!activity.isFinishing) return
             // Use the same submission gate as the in-app "new conversation" button. A detached
             // reset could otherwise finish after a newly reopened activity had started a turn.
-            container.chat.reset()
-            sessionTouched = false
+            if (sessionTouched) {
+                container.chat.reset()
+                sessionTouched = false
+            }
         }
     }
 }

@@ -1,68 +1,63 @@
 package com.example.hjp.ui
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import com.example.hjp.models.ModelDownloads
-import com.example.hjp.models.ModelInstaller
-import java.io.File
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.compose.ui.unit.dp
+import com.example.hjp.HjpApplication
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 internal fun ModelDownloadPanel() {
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
-    val scope = rememberCoroutineScope()
-    var token by remember { mutableStateOf("") }
-    var running by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("") }
-    Column {
-        Text("필수 모델 직접 다운로드 · 약 2.8GB (Wi-Fi 권장)")
-        Text("EmbeddingGemma는 Hugging Face 이용 동의와 읽기 권한 토큰이 필요합니다. 토큰은 저장하지 않습니다.")
-        TextButton(onClick = { uriHandler.openUri("https://huggingface.co/litert-community/embeddinggemma-300m") }) {
-            Text("모델 이용 조건 확인·동의")
+    val setup = (context.applicationContext as HjpApplication).modelSetup
+    val state by setup.state.collectAsState()
+    var accepted by remember { mutableStateOf(setup.termsAccepted) }
+    var mobile by remember { mutableStateOf(false) }
+    var legalDocument by remember { mutableStateOf<String?>(null) }
+    var legalText by remember { mutableStateOf("") }
+    LaunchedEffect(legalDocument) {
+        legalText = legalDocument?.let { name -> withContext(Dispatchers.IO) {
+            context.assets.open("legal/$name").bufferedReader().use { it.readText() }
+        } }.orEmpty()
+    }
+    if (legalDocument != null) AlertDialog(
+        onDismissRequest = { legalDocument = null }, title = { Text("모델 이용 약관 및 고지") },
+        text = { Text(legalText, Modifier.heightIn(max = 450.dp).verticalScroll(rememberScrollState())) },
+        confirmButton = { TextButton(onClick = { legalDocument = null }) { Text("닫기") } },
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("AI 기능 준비", style = MaterialTheme.typography.headlineSmall)
+        Text("명함 인식·검색 모델은 앱에 포함되어 있습니다. 대화 모델 약 2.59GB만 최초 1회 다운로드합니다. 회원가입이나 토큰은 필요하지 않습니다.")
+        TextButton(onClick = { legalDocument = "Gemma-Terms.txt" }) { Text("검색 모델 이용 약관") }
+        TextButton(onClick = { legalDocument = "Gemma-Prohibited-Use.txt" }) { Text("모델 사용 제한 정책") }
+        TextButton(onClick = { legalDocument = "Apache-2.0.txt" }) { Text("대화 모델 라이선스") }
+        TextButton(onClick = { legalDocument = "NOTICE.txt" }) { Text("모델 출처 및 고지") }
+        if (!setup.termsAccepted) Row {
+            Checkbox(checked = accepted, onCheckedChange = { accepted = it }, enabled = !state.busy)
+            Text("모델 약관과 사용 제한 정책을 확인했으며 이에 동의합니다.")
         }
-        OutlinedTextField(value = token, onValueChange = { token = it }, enabled = !running,
-            label = { Text("Hugging Face 읽기 토큰") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation())
-        Button(enabled = !running, onClick = {
-            running = true
-            val accessToken = token
-            token = ""
-            scope.launch {
-                try {
-                    val installer = ModelInstaller(context.getExternalFilesDir("models") ?: File(context.filesDir, "models"))
-                    for (model in ModelDownloads.required) {
-                        status = "${model.fileName}: 기존 파일 확인 중"
-                        installer.download(model, accessToken) { received, total ->
-                            // Installer reports from IO; marshal Compose state changes to the UI.
-                            withContext(Dispatchers.Main) {
-                                status = "${model.fileName}: ${received * 100 / total}% (100% 이후 해시 검증)"
-                            }
-                        }
-                    }
-                    status = "필수 모델 3개 다운로드·해시 검증 완료. 앱을 강제 종료한 뒤 다시 열어 주세요."
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Exception) {
-                    // Avoid displaying network exception URLs (which may contain signed CDN credentials).
-                    status = if (error is IllegalStateException || error is IllegalArgumentException)
-                        error.message ?: "다운로드 실패" else "네트워크 또는 저장 오류. 다시 누르면 이어받습니다."
-                } finally {
-                    running = false
-                }
+        if (!state.ready && !state.busy) Row {
+            Checkbox(checked = mobile, onCheckedChange = { mobile = it })
+            Text("모바일 데이터 사용 허용 (데이터 요금이 발생할 수 있습니다)")
+        }
+        Text(state.message)
+        if (state.busy) {
+            if (state.phase == "downloading" || state.phase == "waiting") {
+                LinearProgressIndicator(progress = { (state.downloaded.toFloat() / state.total).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                Text("${state.downloaded * 100 / state.total}% · ${state.downloaded / 1_000_000} / ${state.total / 1_000_000} MB")
+                TextButton(onClick = { setup.cancelDownload() }) { Text("다운로드 취소") }
+            } else LinearProgressIndicator(Modifier.fillMaxWidth())
+        } else if (state.phase != "broken" && (!state.ready || !setup.termsAccepted)) {
+            Button(enabled = accepted, onClick = { setup.acceptAndDownload(mobile) }) {
+                Text(if (state.ready) "동의하고 시작" else if (state.phase == "error") "다시 시도" else "동의하고 다운로드")
             }
-        }) { Text(if (running) "다운로드 중…" else "필수 모델 다운로드 / 이어받기") }
-        Text("다운로드 중에는 이 화면을 유지해 주세요. 화면을 나가면 중단되며 다음 실행 시 이어받습니다.")
-        if (status.isNotBlank()) Text(status)
+        }
+        Text("다운로드는 백그라운드에서도 진행됩니다. 완료 후 앱에서 검증하고 자동으로 활성화합니다. 명함·대화 내용은 모델 다운로드 서버로 보내지 않습니다.")
     }
 }
