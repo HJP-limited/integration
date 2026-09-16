@@ -47,3 +47,7 @@ __pycache__/
 *.pyc
 
 # Desktop real-model test runner sources are tracked; build/ and model artifacts remain excluded.
+
+# Session handoffs and continuation prompts stay local.
+/docs/새세션_인수인계_*.md
+/docs/새세션_첫프롬프트_*.md
