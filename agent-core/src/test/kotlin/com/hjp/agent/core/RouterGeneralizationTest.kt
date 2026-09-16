@@ -23,6 +23,36 @@ import org.junit.Test
  * being asserted is that the distinction generalises, not that a phrase was added to a list.
  */
 class RouterGeneralizationTest {
+    @Test
+    fun `elliptical named field reads use fresh contact detail`() {
+        val person = DirectoryNameMatch("문지영", "문지영", listOf("T002"), true, false)
+        listOf("문지영씨 전화번호", "문지영 전화번호는", "문지영씨 부서", "문지영씨 이메일", "문지영씨 메일 주소").forEach { text ->
+            val plan = DeterministicTurnRouter.route(context(text, focus(), directoryMatches = listOf(person)))
+            assertTrue("$text -> $plan", plan is TurnRoutePlan.ContactDetail)
+            assertEquals("T002", (plan as TurnRoutePlan.ContactDetail).cardId)
+        }
+        val plan = DeterministicTurnRouter.route(context("부서는", focus()))
+        assertTrue(plan.toString(), plan is TurnRoutePlan.ContactDetail)
+        val replacement = DeterministicTurnRouter.route(context("아니 문지영으로 바꿔줘", focus(), directoryMatches = listOf(person)))
+        assertTrue(replacement.toString(), replacement is TurnRoutePlan.ContactDetail)
+        assertEquals("T002", (replacement as TurnRoutePlan.ContactDetail).cardId)
+        val sameName = DirectoryNameMatch("김지원", "김지원", listOf("C001"), true, false)
+        val repeated = DeterministicTurnRouter.route(context("김지원씨 전화번호", focus(), directoryMatches = listOf(sameName)))
+        assertTrue(repeated.toString(), repeated is TurnRoutePlan.ContactDetail)
+    }
+
+    @Test
+    fun `profession questions after actions keep mandatory search obligation`() {
+        val history = transcript(ModelConversationRole.USER to "김지원씨 메일 작성해줘")
+        listOf("데이터분석가 누구 있지", "데이터분석가 누구있냐고", "데이터 관련 직업 가지고 있는 사람",
+            "메일 관련 업무 담당자 찾아줘", "일정 관련 업무 담당자 찾아줘").forEach { text ->
+            val context = context(text, focus(), history)
+            assertEquals(text, DialogueAct.CONTACT_SEARCH, DeterministicTurnRouter.act(context))
+            val plan = DeterministicTurnRouter.route(context)
+            assertTrue("$text -> $plan", plan is TurnRoutePlan.Continue && plan.searchRequired)
+            assertEquals(text, (plan as TurnRoutePlan.Continue).searchQuery)
+        }
+    }
 
     // ---- an action command is still an action command -------------------------------------------
 

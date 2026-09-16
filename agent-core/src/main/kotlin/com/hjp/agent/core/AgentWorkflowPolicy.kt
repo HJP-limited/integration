@@ -107,8 +107,16 @@ class AgentWorkflowSession internal constructor(
     // typed result fact instead of trying to recognize every completion phrase a model may use.
     private var calendarScreenAwaitingUserSave = false
     private var composeScreenAwaitingUserSend = false
+    private var composeScreenLabel = "메일"
     private var trustedSessionContactTarget = false
     private var contactSearchRequestedByRouter = false
+    private var readOnlyContactTurn = false
+
+    /** Current-turn authority, never inherited from transcript or model prose. */
+    fun restrictToContactReads() {
+        readOnlyContactTurn = true
+        contactSearchRequestedByRouter = true
+    }
     /** A prior search left multiple candidates and no user selection; contact-bound actions must
      * remain fail-closed until that clarification is resolved. */
     private var unresolvedContactObligation = false
@@ -224,6 +232,9 @@ class AgentWorkflowSession internal constructor(
         if (candidateCount > 1) unresolvedContactObligation = true
     }
 
+    /** An old result list constrains this turn only if this request actually refers to a person. */
+    fun contactReferenceRequested(): Boolean = contactNameTarget || ContactAnaphora.isPresent(userText)
+
     /** Purpose a fresh contact read must use for this request's terminal action. */
     fun requiredFreshReadPurpose(): String = when {
         updateIntent -> "display"
@@ -249,7 +260,13 @@ class AgentWorkflowSession internal constructor(
                 normalizeCalendarDateTimes(call),
             )
             UPDATE_BUSINESS_CARD -> normalizeUpdateClearFields(call)
-            OPEN_COMPOSE -> normalizeVerifiedComposeRecipient(call)
+            OPEN_COMPOSE -> normalizeVerifiedComposeRecipient(
+                // SMS has no subject field. Drop this inapplicable model argument without
+                // changing the recipient, channel or message body that still require validation.
+                if (call.arguments.string("channel") == "sms")
+                    call.copy(arguments = JsonObject(call.arguments.filterKeys { it != "subject" }))
+                else call,
+            )
             else -> call
         }
     }
@@ -371,6 +388,10 @@ class AgentWorkflowSession internal constructor(
     }
 
     fun validate(call: ModelToolCall, contract: ToolContract): WorkflowValidationResult {
+        if (readOnlyContactTurn && call.modelToolName !in setOf(SEARCH_CONTACTS, GET_CONTACT, "count_contacts")) {
+            return reject(WorkflowRejectReason.TOOL_NOT_REQUESTED,
+                "현재 요청은 명함 검색·조회입니다. 이전 메일·일정·수정 작업은 실행하지 않습니다.")
+        }
         if (unsupportedRequest) {
             return reject(
                 WorkflowRejectReason.UNSUPPORTED_REQUEST,
@@ -499,6 +520,7 @@ class AgentWorkflowSession internal constructor(
                     (result.data["requires_user_confirmation"] as? JsonPrimitive)?.content == "true"
             }
             OPEN_COMPOSE -> {
+                composeScreenLabel = if (call.arguments.string("channel") == "sms") "문자" else "메일"
                 composeScreenAwaitingUserSend =
                     (result.data["opened"] as? JsonPrimitive)?.content == "true" &&
                     (result.data["requires_user_confirmation"] as? JsonPrimitive)?.content == "true"
@@ -542,7 +564,7 @@ class AgentWorkflowSession internal constructor(
         calendarScreenAwaitingUserSave ->
             "캘린더 일정 작성 화면을 열었습니다. 내용을 확인한 뒤 저장해 주세요."
         composeScreenAwaitingUserSend ->
-            "메일 작성 화면을 열었습니다. 내용을 확인한 뒤 전송해 주세요."
+            "$composeScreenLabel 작성 화면을 열었습니다. 내용을 확인한 뒤 전송해 주세요."
         else -> null
     }
 
@@ -662,8 +684,8 @@ class AgentWorkflowSession internal constructor(
             // Reading one already-verified card by id satisfies "show me the contact" just as well
             // as a fresh search. Demanding search_contacts here reported a completed lookup as a
             // failure whenever the turn resolved a reference instead of a name.
-            contactReadIntent && SEARCH_CONTACTS !in successfulTools &&
-                GET_CONTACT !in successfulTools ->
+            (contactReadIntent || readOnlyContactTurn) && SEARCH_CONTACTS !in successfulTools &&
+                GET_CONTACT !in successfulTools && "count_contacts" !in successfulTools ->
                 "연락처 검색을 완료하지 못했습니다. 다시 시도해 주세요."
             // Asking which field to change is the correct end of an under-specified edit, not an
             // interrupted workflow, so it must not be overwritten with a retry message.

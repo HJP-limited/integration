@@ -40,6 +40,139 @@ import org.junit.Test
 
 class AgentKernelTest {
     @Test
+    fun `ambiguous prior search does not block a standalone calendar`() = runBlocking {
+        var opened = 0
+        val calendar = object : ToolPlugin {
+            override val implementationId = ToolImplementationId("test.calendar")
+            override val contract = TEST_CONTRACT.copy(
+                capabilityId = ToolCapabilityId("calendar.create_event"), modelName = "create_calendar_event",
+                inputSchema = buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        listOf("title", "start_time").forEach { key -> put(key, buildJsonObject { put("type", "string") }) }
+                    })
+                },
+            )
+            override suspend fun availability() = ToolAvailability.Ready
+            override suspend fun execute(request: ToolRequest, context: ToolExecutionContext): ToolExecutionResult {
+                opened++
+                return ToolExecutionResult.Success(request.callId, request.capabilityId, request.contractVersion, 1,
+                    buildJsonObject { put("opened", true); put("requires_user_confirmation", true) })
+            }
+        }
+        val registry = DefaultToolRegistry(listOf(ToolImplementationCandidate(calendar)))
+        val gateway = object : AgentModelGateway {
+            override suspend fun openSession(config: ModelSessionConfig) = object : AgentModelSession {
+                override val catalogRevision = config.toolCatalog.revision
+                override suspend fun decide(input: ModelInput) = ModelDecision.ToolCalls(listOf(
+                    ModelToolCall("cal", "create_calendar_event", buildJsonObject {
+                        put("title", "팀 미팅"); put("start_time", "2026-10-01T15:00")
+                    }),
+                ))
+                override suspend fun continueWithToolResult(result: ModelToolResponse): ModelDecision = error(result.payload.toString())
+                override fun streamFinal(input: FinalAnswerInput) = flowOf(input.draftText)
+                override fun close() = Unit
+            }
+        }
+        val store = InMemoryAgentSessionStore()
+        store.getOrCreate().conversationMemory = ConversationMemory(candidateContacts = listOf(
+            com.hjp.agent.contract.ContactCandidate("A", "첫번째"), com.hjp.agent.contract.ContactCandidate("B", "두번째"),
+        ))
+        val sessions = AgentSessionManager(store, gateway, "system", "ko-KR")
+        val kernel = AgentKernel(registry, DefaultToolExecutor(registry), DefaultToolPolicyEngine(), sessions,
+            DefaultToolObservationMapper(), FakeEnvironment())
+        val events = kernel.runTurn("2026년 10월 1일 오후 3시 팀 미팅 일정 만들어줘").toList()
+        assertEquals(events.toString(), 1, opened)
+        assertTrue((events.last() as AgentEvent.FinalMessage).text.contains("저장해 주세요"))
+        sessions.close()
+    }
+    @Test
+    fun `successful external screen returns receipt without another inference`() = runBlocking {
+        val plugin = ComposeFakePlugin(receipt = true)
+        val registry = DefaultToolRegistry(listOf(ToolImplementationCandidate(plugin)))
+        val gateway = object : AgentModelGateway {
+            override suspend fun openSession(config: ModelSessionConfig) = object : AgentModelSession {
+                override val catalogRevision = config.toolCatalog.revision
+                override suspend fun decide(input: ModelInput) = ModelDecision.ToolCalls(listOf(
+                    ModelToolCall("compose", "open_compose", buildJsonObject {
+                        put("channel", "email"); put("to", "test@example.com"); put("subject", "감사"); put("body", "감사합니다")
+                    }),
+                ))
+                override suspend fun continueWithToolResult(result: ModelToolResponse): ModelDecision =
+                    error("No second generation after successful UI opening")
+                override suspend fun resetConversation() = error("Reset must be deferred until next turn")
+                override fun streamFinal(input: FinalAnswerInput) = flowOf(input.draftText)
+                override fun close() = Unit
+            }
+        }
+        val sessions = AgentSessionManager(InMemoryAgentSessionStore(), gateway, "system", "ko-KR")
+        val kernel = AgentKernel(registry, DefaultToolExecutor(registry), DefaultToolPolicyEngine(), sessions,
+            DefaultToolObservationMapper(), FakeEnvironment())
+        val events = kernel.runTurn("test@example.com에게 감사 메일 작성해줘").toList()
+        assertEquals(1, plugin.executionCount)
+        assertTrue((events.last() as AgentEvent.FinalMessage).text.contains("전송해 주세요"))
+        sessions.close()
+    }
+    @Test
+    fun `grounded search executes before one model answer and forbids stale compose`() = runBlocking {
+        for (malicious in listOf(false, true)) {
+            var searches = 0
+            var answers = 0
+            var nativeResets = 0
+            val search = object : ToolPlugin {
+                override val implementationId = ToolImplementationId("test.search")
+                override val contract = TEST_CONTRACT.copy(
+                    capabilityId = ToolCapabilityId("contact.search"), modelName = "search_contacts",
+                    inputSchema = buildJsonObject {
+                        put("type", "object")
+                        put("properties", buildJsonObject { put("query", buildJsonObject { put("type", "string") }) })
+                    },
+                )
+                override suspend fun availability() = ToolAvailability.Ready
+                override suspend fun execute(request: ToolRequest, context: ToolExecutionContext): ToolExecutionResult {
+                    searches++
+                    return ToolExecutionResult.Success(request.callId, request.capabilityId, request.contractVersion, 1,
+                        buildJsonObject { put("results", kotlinx.serialization.json.JsonArray(emptyList())) })
+                }
+            }
+            val compose = ComposeFakePlugin()
+            val registry = DefaultToolRegistry(listOf(search, compose).map { ToolImplementationCandidate(it) })
+            val gateway = object : AgentModelGateway {
+                override suspend fun openSession(config: ModelSessionConfig) = object : AgentModelSession {
+                    override val catalogRevision = config.toolCatalog.revision
+                    override val supportsGroundedReadStart = true
+                    override suspend fun decide(input: ModelInput): ModelDecision = error("Unnecessary planning inference")
+                    override suspend fun answerGroundedRead(input: ModelInput.User, result: ModelToolResponse): ModelDecision {
+                        answers++
+                        assertEquals(answers, searches)
+                        assertEquals("search_contacts", result.modelToolName)
+                        return if (malicious) ModelDecision.ToolCalls(listOf(ModelToolCall("stale", "open_compose",
+                            buildJsonObject { put("channel", "email"); put("to", "test@example.com"); put("body", "stale task") })))
+                        else ModelDecision.FinalCandidate("검색 결과가 없습니다.")
+                    }
+                    override suspend fun continueWithToolResult(result: ModelToolResponse) = ModelDecision.FinalCandidate("실행하지 않았습니다.")
+                    override fun streamFinal(input: FinalAnswerInput) = flowOf(input.draftText)
+                    override suspend fun resetConversation() { nativeResets++ }
+                    override fun close() = Unit
+                }
+            }
+            val sessions = AgentSessionManager(InMemoryAgentSessionStore(), gateway, "system", "ko-KR")
+            val kernel = AgentKernel(registry, DefaultToolExecutor(registry), DefaultToolPolicyEngine(), sessions,
+                DefaultToolObservationMapper(), FakeEnvironment())
+            val events = kernel.runTurn("데이터분석가 누구 있지").toList()
+            assertEquals(events.toString(), 1, searches)
+            assertEquals(1, answers)
+            assertEquals(0, compose.executionCount)
+            if (!malicious) {
+                kernel.runTurn("데이터 관련 직업 가지고 있는 사람").toList()
+                assertEquals(2, searches)
+                assertEquals(2, answers)
+                assertEquals(1, nativeResets)
+            }
+            sessions.close()
+        }
+    }
+    @Test
     fun `tool result is returned to model and final answer completes`() = runBlocking {
         val plugin = FakePlugin("fake.v1")
         val registry = DefaultToolRegistry(listOf(ToolImplementationCandidate(plugin)))
@@ -474,7 +607,7 @@ class AgentKernelTest {
         override fun close() = Unit
     }
 
-    private class ComposeFakePlugin : ToolPlugin {
+    private class ComposeFakePlugin(private val receipt: Boolean = false) : ToolPlugin {
         var executionCount = 0
         override val implementationId = ToolImplementationId("compose.fake.v1")
         override val contract = COMPOSE_CONTRACT
@@ -486,7 +619,7 @@ class AgentKernelTest {
                 request.capabilityId,
                 request.contractVersion,
                 1,
-                buildJsonObject { put("opened", true) },
+                buildJsonObject { put("opened", true); if (receipt) put("requires_user_confirmation", true) },
             )
         }
     }

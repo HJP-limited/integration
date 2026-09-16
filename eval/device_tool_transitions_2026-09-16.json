@@ -1,0 +1,7 @@
+[
+  {"question":"문지영씨한테 안녕하세요라고 문자 작성해줘","required_tools":["get_contact","open_compose"],"allowed_tools":["search_contacts","get_contact","open_compose"],"gold_ids":["T002"],"contains":["문자 작성 화면","전송해 주세요"]},
+  {"question":"데이터분석가 누구 있지","required_tools":["search_contacts"],"allowed_tools":["search_contacts","get_contact"],"card_predicate":"data_role","grounded_names":true},
+  {"question":"2026년 10월 1일 오후 3시 팀 미팅 일정 만들어줘","required_tools":["create_calendar_event"],"allowed_tools":["get_current_datetime","create_calendar_event"],"gold_ids":[],"contains":["저장해 주세요"]},
+  {"question":"데이터 관련 직업 가지고 있는 사람","required_tools":["search_contacts"],"allowed_tools":["search_contacts","get_contact"],"card_predicate":"data_role","grounded_names":true},
+  {"question":"명함 총 몇 개야?","required_tools":["count_contacts"],"allowed_tools":["count_contacts"],"contains":["1000"]}
+]

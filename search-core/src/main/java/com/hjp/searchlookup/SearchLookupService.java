@@ -108,6 +108,23 @@ public final class SearchLookupService implements RetrievalService {
         int semanticCandidates = semantic.size();
         keyword = SearchFieldConstraintMatcher.apply(keyword, plan);
         semantic = SearchFieldConstraintMatcher.apply(semantic, plan);
+        // A bare exact stored name is an identity constraint, not a request for similar people.
+        // Keep all exact homonyms; never turn an ambiguous name into an arbitrary single person.
+        java.util.Set<String> exactNameIds = new java.util.HashSet<>();
+        String nameQuery = compactName(rawQuery);
+        if (!nameQuery.isEmpty()) {
+            for (BusinessCard card : repository.getAllCards()) {
+                if (nameQuery.equals(compactName(card.name)) || nameQuery.equals(compactName(card.nameEn))) {
+                    exactNameIds.add(card.id);
+                }
+            }
+        }
+        if (!exactNameIds.isEmpty()) {
+            keyword = new java.util.ArrayList<>(keyword);
+            semantic = new java.util.ArrayList<>(semantic);
+            keyword.removeIf(result -> !exactNameIds.contains(result.cardId));
+            semantic.removeIf(result -> !exactNameIds.contains(result.cardId));
+        }
         List<SearchResult> results = actual==RetrievalMode.KEYWORD_ONLY ? limit(keyword,safe) : actual==RetrievalMode.SEMANTIC_ONLY ? limit(semantic,safe) : rankFusion.fuse(keyword, semantic, safe);
         String rag= actual==RetrievalMode.KEYWORD_ONLY ? "" : ragContextBuilder.build(analysis.normalizedQuery,results,Math.min(RAG_CARD_LIMIT,safe));
         boolean fb=requested!=actual||(embeddingEngine instanceof OnDeviceEmbeddingEngine&&((OnDeviceEmbeddingEngine)embeddingEngine).isFallbackUsed());
@@ -140,6 +157,10 @@ public final class SearchLookupService implements RetrievalService {
             if (Character.isDigit(q.charAt(i))) digits++;
         }
         return digits >= 4;
+    }
+
+    private static String compactName(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
     }
 
     /**

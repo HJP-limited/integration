@@ -1,0 +1,10 @@
+[
+  {"question":"손다은 명함 찾아줘","required_tools":["search_contacts"],"allowed_tools":["search_contacts","get_contact"],"gold_ids":["T001"],"contains":["손다은"],"grounded_names":true},
+  {"question":"그 사람 회사는?","allowed_tools":["get_contact"],"contains":["블루오션컨설팅"]},
+  {"question":"부서는","allowed_tools":["get_contact"],"contains":["데이터사이언스팀"]},
+  {"question":"아니 문지영으로 바꿔줘","required_tools":["get_contact"],"allowed_tools":["get_contact"],"gold_ids":["T002"],"contains":["문지영","덕수법률"]},
+  {"question":"문지영씨 전화번호","required_tools":["get_contact"],"allowed_tools":["get_contact"],"gold_ids":["T002"],"contains":["010-3001-6001"]},
+  {"question":"문지영씨한테 감사 메일 작성해줘","required_tools":["get_contact","open_compose"],"allowed_tools":["get_contact","open_compose"],"gold_ids":["T002"],"contains":["전송해 주세요"]},
+  {"question":"데이터분석가 누구 있지","required_tools":["search_contacts"],"allowed_tools":["search_contacts","get_contact"],"card_predicate":"data_role","grounded_names":true},
+  {"question":"데이터 관련 직업 가지고 있는 사람","required_tools":["search_contacts"],"allowed_tools":["search_contacts","get_contact"],"card_predicate":"data_role","grounded_names":true}
+]

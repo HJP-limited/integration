@@ -58,6 +58,9 @@ class CountingAgentModelGateway(
     ) : AgentModelSession {
 
         override val catalogRevision: String get() = inner.catalogRevision
+        override val supportsGroundedReadStart: Boolean get() = inner.supportsGroundedReadStart
+        override suspend fun answerGroundedRead(input: ModelInput.User, result: ModelToolResponse): ModelDecision =
+            counted { inner.answerGroundedRead(input, result) }
 
         /**
          * Counts one call to the boundary.

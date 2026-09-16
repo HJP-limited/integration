@@ -85,7 +85,17 @@ class LiteRtAgentModelGateway(
         val factory = suspend {
             withContext(Dispatchers.Default) { activeEngine.createConversation(conversationConfig) }
         }
-        return LiteRtAgentModelSession(factory, factory(), config.toolCatalog.revision)
+        val readFactory = suspend {
+            withContext(Dispatchers.Default) {
+                activeEngine.createConversation(ConversationConfig(
+                    systemInstruction = Contents.of(config.systemInstruction),
+                    samplerConfig = SamplerConfig(topK = config.samplingProfile.topK,
+                        topP = config.samplingProfile.topP, temperature = config.samplingProfile.temperature.toDouble()),
+                    automaticToolCalling = false,
+                ))
+            }
+        }
+        return LiteRtAgentModelSession(factory, factory(), config.toolCatalog.revision, readFactory)
     }
 
     private suspend fun requireEngine(): Engine = engineMutex.withLock {
@@ -147,9 +157,20 @@ private class LiteRtAgentModelSession(
     private val conversationFactory: suspend () -> Conversation,
     initialConversation: Conversation,
     override val catalogRevision: String,
+    private val readConversationFactory: suspend () -> Conversation,
 ) : AgentModelSession {
     private var conversation: Conversation = initialConversation
     private val replies = NativeToolReplyTracker()
+    override val supportsGroundedReadStart = true
+    override suspend fun answerGroundedRead(input: ModelInput.User, result: ModelToolResponse): ModelDecision =
+        withContext(Dispatchers.Default) {
+            val readConversation = readConversationFactory()
+            try {
+                val reply = readConversation.sendMessage(com.hjp.agent.contract.GroundedReadPrompt.render(input, result))
+                if (reply.toolCalls.isNotEmpty()) ModelDecision.Invalid("조회 답변에서 도구 호출이 발생했습니다.", false)
+                else ModelDecision.FinalCandidate(reply.toString())
+            } finally { readConversation.close() }
+        }
 
     override suspend fun decide(input: ModelInput): ModelDecision = when (input) {
         is ModelInput.User -> withContext(Dispatchers.Default) {

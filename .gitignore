@@ -46,6 +46,4 @@ tokenizer_config.json
 __pycache__/
 *.pyc
 
-# 노트북 러너. 실기기에서 도는 것만 저장소에 올린다 — 이건 로컬에서 규칙을 시험해
-# 보려고 만든 것이라 APK 에도, 저장소에도 들어가지 않는다.
-/desktop/
+# Desktop real-model test runner sources are tracked; build/ and model artifacts remain excluded.

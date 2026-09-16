@@ -13,6 +13,20 @@ import org.junit.Test;
 
 public class SearchLookupServiceTest {
     @Test
+    public void exactStoredNameKeepsHomonymsButExcludesSemanticNeighbours() {
+        List<BusinessCard> cards = new ArrayList<>();
+        String[] names = {"손다은", "손다은", "전다은", "손다인"};
+        for (int i = 0; i < names.length; i++) {
+            cards.add(new BusinessCard("N" + i, names[i], "", "회사", "개발자", "팀", "it", "서울",
+                    "", "", "", "", Collections.emptyList()));
+        }
+        SearchLookupService service = new SearchLookupService(cards, new DeterministicModelEngine());
+        RetrievalResponse result = service.retrieve("손다은", 5, RetrievalMode.HYBRID);
+        assertEquals(2, result.results.size());
+        assertTrue(result.cardIds.containsAll(Arrays.asList("N0", "N1")));
+        assertFalse(result.fallbackUsed);
+    }
+    @Test
     public void localEmbeddingIsNotUsedAsProductionSemanticAndFallsBackToKeyword() {
         BusinessCard ai = new BusinessCard("C002", "오성령", "Sungryung Oh", "코어AI",
                 "AI 엔지니어", "플랫폼팀", "it", "판교", "010", "ai@example.com",

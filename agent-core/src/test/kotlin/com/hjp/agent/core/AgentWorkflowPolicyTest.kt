@@ -21,6 +21,42 @@ import org.junit.Test
 
 class AgentWorkflowPolicyTest {
     @Test
+    fun `standalone calendar and literal recipient do not inherit contact ambiguity`() {
+        assertTrue(!turn("2026년 10월 1일 오후 3시 팀 미팅 일정 만들어줘").contactReferenceRequested())
+        assertTrue(!turn("test@example.com에게 메일 작성해줘").contactReferenceRequested())
+        assertTrue(turn("그분과 내일 오후 3시에 미팅 잡아줘").contactReferenceRequested())
+    }
+    @Test
+    fun `sms normalization drops only email subject and keeps recipient validation`() {
+        val workflow = turn("010-1234-5678에 안녕하세요라고 문자 작성해줘")
+        val raw = call("open_compose", "channel" to "sms", "to" to "010-1234-5678",
+            "subject" to "이메일용 제목", "body" to "안녕하세요")
+        val normalized = workflow.normalizeArguments(raw, COMPOSE)
+        assertTrue("subject" !in normalized.arguments)
+        assertEquals(raw.arguments["body"], normalized.arguments["body"])
+        assertEquals(raw.arguments["to"], normalized.arguments["to"])
+        assertAllowed(workflow.validate(normalized, COMPOSE))
+        val wrongRecipient = call("open_compose", "channel" to "sms", "to" to "010-9999-9999", "body" to "안녕하세요")
+        assertRejected(workflow.validate(workflow.normalizeArguments(wrongRecipient, COMPOSE), COMPOSE),
+            WorkflowRejectReason.CONTACT_VALUE_NOT_VERIFIED)
+    }
+    @Test
+    fun `read-only turn rejects every action regardless of model history`() {
+        listOf(COMPOSE, CALENDAR, UPDATE, DATETIME).forEach { contract ->
+            val workflow = turn("데이터분석가 누구 있지")
+            workflow.restrictToContactReads()
+            assertRejected(workflow.validate(call(contract.modelName), contract), WorkflowRejectReason.TOOL_NOT_REQUESTED)
+        }
+    }
+
+    @Test
+    fun `router search cannot claim missing contact without a tool result`() {
+        val workflow = turn("데이터 관련 직업 가지고 있는 사람")
+        workflow.restrictToContactReads()
+        assertTrue(workflow.validateFinal("해당 명함은 없습니다.") is WorkflowFinalValidationResult.Replace)
+        assertAllowed(workflow.validate(call("search_contacts", "query" to "데이터 관련 직업"), SEARCH))
+    }
+    @Test
     fun `unresolved multi-candidate contact blocks downstream datetime`() {
         val workflow = turn("내일 오전 10시에 미팅 잡아줘")
         workflow.seedUnresolvedContactObligation(2)
@@ -615,6 +651,12 @@ class AgentWorkflowPolicyTest {
             "메일 작성 화면을 열었습니다. 내용을 확인한 뒤 전송해 주세요.",
             composeWorkflow.terminalSurfaceFallback(),
         )
+        val smsWorkflow = turn("010-1234-5678에 문자 작성해줘")
+        val sms = call("open_compose", "channel" to "sms", "to" to "010-1234-5678", "body" to "안녕하세요")
+        smsWorkflow.recordResult(sms, success(sms, buildJsonObject {
+            put("opened", true); put("requires_user_confirmation", true)
+        }))
+        assertEquals("문자 작성 화면을 열었습니다. 내용을 확인한 뒤 전송해 주세요.", smsWorkflow.terminalSurfaceFallback())
 
         val calendarWorkflow = turn("내일 오후 3시에 일정 만들어줘")
         val calendar = call("create_calendar_event")

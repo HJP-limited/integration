@@ -103,10 +103,12 @@ class AgentKernel(
     private val turnMutex = Mutex()
     private var nativeConversationTurns = 0
     private var nativeConversationTokens = 0
+    private var requiresNativeBootstrap = false
 
     override suspend fun resetSession(): Long {
         nativeConversationTurns = 0
         nativeConversationTokens = 0
+        requiresNativeBootstrap = false
         nativeLedger.clear()
         diagnostics.clear()
         return sessionManager.reset()
@@ -328,6 +330,13 @@ class AgentKernel(
             var callCount = 0
             var protocolCorrections = 0
             val workflow = workflowPolicy.startTurn(modelText, environment.timeZoneId)
+            if (dialogueAct in setOf(
+                    com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH,
+                    com.hjp.agent.contract.DialogueAct.CONTACT_DETAIL,
+                    com.hjp.agent.contract.DialogueAct.CONTACT_SELECTION,
+                )) {
+                workflow.restrictToContactReads()
+            }
             // A distinct explicit name starts a new acquisition even when an older search left
             // candidates in memory. Retire that stale list before the ambiguity guard and context
             // projection; mention history remains intact for later conversational references.
@@ -353,7 +362,8 @@ class AgentKernel(
             // model cannot start a calendar/compose/update prerequisite against nobody (or an old
             // focus). Standalone non-contact calendar requests are unaffected by this flag.
             if (session.conversationMemory.selectedContact == null &&
-                session.conversationMemory.candidateContacts.size > 1
+                session.conversationMemory.candidateContacts.size > 1 &&
+                workflow.contactReferenceRequested()
             ) {
                 workflow.seedUnresolvedContactObligation(
                     session.conversationMemory.candidateContacts.size,
@@ -467,13 +477,14 @@ class AgentKernel(
                 // be sent rather than against an assumed catalog reserve.
                 fixedContextTokens = nativeLedger.fixedTokens(),
                 currentTarget = currentTarget,
-                targetScopedHistory = groundedReplacement,
+                targetScopedHistory = groundedReplacement || requiresNativeBootstrap,
             ))
             if (promptContext.startNewNativeConversation) {
                 model.resetConversation()
                 nativeLedger.rotate()
                 nativeConversationTurns = 0
                 nativeConversationTokens = 0
+                requiresNativeBootstrap = false
             }
             nativeConversationTurns += 1
             nativeConversationTokens += promptContext.estimatedTokens
@@ -526,7 +537,16 @@ class AgentKernel(
                 )
             // ContactDetail already has a deterministic fresh-read path above. All remaining
             // turns must establish native user context before any tool response can be sent.
-            var decision = model.decide(modelUserInput)
+            val initialRead = (route as? TurnRoutePlan.Continue)?.takeIf {
+                it.searchRequired && dialogueAct == com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH &&
+                    !Regex("몇|얼마나|개수|장수|전체|전부|모두").containsMatchIn(normalized) &&
+                    model.supportsGroundedReadStart
+            }
+            var groundedReadPending = initialRead != null
+            var decision: ModelDecision = if (initialRead != null) ModelDecision.ToolCalls(listOf(
+                ModelToolCall(UUID.randomUUID().toString(), "search_contacts",
+                    buildJsonObject { put("query", initialRead.searchQuery ?: normalized) }),
+            )) else model.decide(modelUserInput)
             // A native inference cannot be interrupted, so the first thing to check when it returns
             // is whether the session it belongs to still exists.
             if (lease.isStale()) return@withLock
@@ -537,6 +557,18 @@ class AgentKernel(
                 when (val current = decision) {
                     is ModelDecision.FinalCandidate -> {
                         if (lease.isStale()) return@withLock
+                        // A typed search request must reach the store even when Gemma replies
+                        // from stale history. This is a read-only obligation, not keyword fallback.
+                        val requiredSearch = (route as? TurnRoutePlan.Continue)
+                            ?.takeIf { it.searchRequired && dialogueAct == com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH }
+                        if (requiredSearch != null && callCount == 0 &&
+                            !Regex("몇|얼마나|개수|장수|전체|전부|모두").containsMatchIn(normalized)) {
+                            decision = ModelDecision.ToolCalls(listOf(ModelToolCall(
+                                UUID.randomUUID().toString(), "search_contacts",
+                                buildJsonObject { put("query", requiredSearch.searchQuery ?: normalized) },
+                            )))
+                            continue
+                        }
                         // The model ended in prose while the workflow still owes a terminal tool.
                         // Accepting this is how "search → get_contact → (prose)" was recorded as a
                         // completed request that never opened anything. Give it one bounded chance
@@ -946,7 +978,20 @@ class AgentKernel(
                             observation.modelResponse.payload.toString(),
                         )
                         emit(AgentEvent.ToolFinished(observation.safeUiMessageKo))
-                        decision = model.continueWithToolResult(observation.modelResponse)
+                        val receipt = workflow.terminalSurfaceFallback()
+                            ?.takeIf { workflow.pendingTerminalTool() == null }
+                        decision = if (receipt != null) {
+                            // The platform has already opened the requested surface. Do not pay
+                            // for a second draft, and do not leave an unanswered native tool call.
+                            requiresNativeBootstrap = true
+                            ModelDecision.FinalCandidate(receipt)
+                        } else if (groundedReadPending) {
+                            groundedReadPending = false
+                            // The read-only generator has its own native conversation. The next
+                            // action session must reconstruct history from the canonical transcript.
+                            requiresNativeBootstrap = true
+                            model.answerGroundedRead(modelUserInput, observation.modelResponse)
+                        } else model.continueWithToolResult(observation.modelResponse)
                         if (lease.isStale()) return@withLock
                     }
                 }

@@ -394,6 +394,16 @@ object DeterministicTurnRouter {
         // name themselves; resolving a pronoun from the old selection would re-target the rejected
         // person, so the turn is parsed from scratch.
         if (correctionMarkers.any(raw::contains) || raw.contains("다시 찾아")) {
+            // Changing the conversation target is not renaming a DB row. A field edit contains
+            // a field; this fully matched short form contains only a verified person's name.
+            context.directoryMatches.firstOrNull { match ->
+                match.identifiesAPerson && match.cardIds.size == 1 &&
+                    Regex("아니[,\\s]*${Regex.escape(match.name)}(?:씨|님)?(?:으로|로)\\s*바꿔\\s*줘[.!?]*")
+                        .matches(raw)
+            }?.let { match ->
+                return Decision(DialogueAct.CONTACT_DETAIL,
+                    TurnRoutePlan.ContactDetail(match.cardIds.single(), match.name, emptyList()))
+            }
             val corrected = raw.replace(CORRECTION_PREFIX_REGEX, "").trim()
             resolveCandidateReference(corrected, context)?.let { replacement ->
                 return targetedPlan(
@@ -606,11 +616,16 @@ object DeterministicTurnRouter {
      * read request: "그 사람 메모를 VIP로 수정해줘" mentions 메모 but is an update.
      */
     private fun requestedFields(raw: String): List<String>? {
-        if (actionMarkers.any { raw.contains(it, ignoreCase = true) } && !isPureAttributeQuestion(raw)) {
-            return null
-        }
+        // Search-box utterances routinely omit the verb: "문지영씨 전화번호", "부서는".
+        // Only a terminal field noun (optionally with a topic particle) is elliptical read syntax.
+        val ellipticalField = !EXECUTION_VERB_REGEX.containsMatchIn(raw) && !CardUpdateIntent.hasUpdateVerb(raw) &&
+            attributeFields.any { (label, _) ->
+                Regex("${Regex.escape(label)}(?:은|는|이|가|요)?[?？.!\\s]*$").containsMatchIn(raw)
+            }
+        if (actionMarkers.any { raw.contains(it, ignoreCase = true) } &&
+            !isPureAttributeQuestion(raw) && !ellipticalField) return null
         val fields = attributeFields.filter { raw.contains(it.first) }.map { it.second }.distinct()
-        if (fields.isNotEmpty() && isQuestionOrShowRequest(raw)) return fields
+        if (fields.isNotEmpty() && (isQuestionOrShowRequest(raw) || ellipticalField)) return fields
         val wantsCard = cardObjectMarkers.any(raw::contains) &&
             (raw.contains("보여") || raw.contains("알려") || raw.contains("확인"))
         return if (wantsCard) emptyList() else null
@@ -956,16 +971,19 @@ object DeterministicTurnRouter {
         // 사람 이름만 던진 것도 마찬가지다 — "손다은" 은 그 사람을 찾아 달라는 말이다.
         // 이름인지 아닌지는 문장의 철자가 아니라 저장소가 답한다.
         val namesAKnownPerson = context?.directoryMatches?.any { it.identifiesAPerson } == true
-        if (!ContactReadIntent.hasSearchVerb(raw) && !namesAKnownTitle && !namesAKnownPerson) {
+        val peopleQuery = Regex("누구|사람|직원|담당자|관련.*직업").containsMatchIn(raw)
+        if (!ContactReadIntent.hasSearchVerb(raw) && !namesAKnownTitle && !namesAKnownPerson && !peopleQuery) {
             return false
         }
-        if (ActionVocabulary.COMPOSE.any(raw::contains) ||
-            ActionVocabulary.CALENDAR.any(raw::contains) ||
+        val explicitSearchOnly = ContactReadIntent.hasSearchVerb(raw) &&
+            !EXECUTION_VERB_REGEX.containsMatchIn(raw) && !CardUpdateIntent.hasUpdateVerb(raw)
+        if ((!explicitSearchOnly && (ActionVocabulary.COMPOSE.any(raw::contains) ||
+            ActionVocabulary.CALENDAR.any(raw::contains))) ||
             CardUpdateIntent.hasUpdateVerb(raw) ||
             conversationScopeMarkers.any(raw::contains) ||
             isHistoricalRecall(raw)
         ) return false
-        val asksForPeople = listOf("사람", "직원", "담당자", "분").any(raw::contains)
+        val asksForPeople = peopleQuery || listOf("분").any(raw::contains)
         val hasAttribute = listOf(
             "회사", "주식회사", "(주)", "㈜", "소속", "직장", "부서", "팀", "직함", "직급", "직책", "직위",
             "대표", "이사", "부장", "과장", "차장", "대리", "사원", "매니저", "디자이너", "엔지니어",
@@ -975,6 +993,7 @@ object DeterministicTurnRouter {
             "designer", "manager", "engineer", "developer", "director", "lead", "head", "chief", "officer",
             "cdo", "cmo", "cto", "ceo", "cio", "cfo", "변호사", "회계사", "세무사", "노무사", "변리사",
             "의사", "간호사", "교수", "컨설턴트", "기획자", "개발자", "연구원", "디렉터", "실장", "전무", "상무",
+            "분석가", "직업", "업무", "관련",
         ).any(raw.lowercase()::contains)
         // 저장소가 직함이라고 답한 말이 문장에 있으면 그것만으로 속성 검색이다.
         //
@@ -1067,11 +1086,9 @@ object DeterministicTurnRouter {
      * particle. Searching for both costs one query and cannot lose either.
      */
     private fun directoryLookup(raw: String, context: TurnContext): TurnRoutePlan {
-        val priorId = context.memory.selectedContact?.cardId
         val match = context.directoryMatches.firstOrNull {
             it.identifiesAPerson &&
-                (raw.contains(it.span) || raw.noSpaces().contains(it.name.noSpaces())) &&
-                (priorId == null || it.cardIds.any { id -> id != priorId })
+                (raw.contains(it.span) || raw.noSpaces().contains(it.name.noSpaces()))
             }
             ?: run {
                 // A named downstream request still needs acquisition when the directory cannot
@@ -1091,7 +1108,7 @@ object DeterministicTurnRouter {
                 // when the directory lookup is unavailable (or cannot classify a compact name)
                 // but the user has still clearly asked to find somebody.  We never select a card
                 // here: uniqueness/ordinal resolution remains downstream of search results.
-                if (!ContactReadIntent.hasSearchVerb(raw) ||
+                if ((!ContactReadIntent.hasSearchVerb(raw) && !isExplicitAttributeSearch(raw, context)) ||
                     ReportedSpeechIntent.isAboutAnActionRatherThanARequest(raw) ||
                     refusalMarkers.containsMatchIn(raw) ||
                     conditionalQuestionMarkers.containsMatchIn(raw) ||
@@ -1156,7 +1173,7 @@ object DeterministicTurnRouter {
         // here lets the kernel retire stale selected_contact before rendering model context, while
         // the rewritten search still performs the normal fresh lookup.
         val prior = context.memory.selectedContact
-        return if (match.cardIds.size == 1 && prior?.cardId != match.cardIds.single()) {
+        return if (match.cardIds.size == 1) {
             // A named attribute question is already fully grounded here. Route it through the same
             // deterministic fresh-read path used for a remembered contact instead of rewriting it
             // into a model-owned search. This also prevents field words such as `이메일` from being

@@ -119,10 +119,10 @@ class RepositoryContactDirectory(
 
     override suspend fun titlesIn(text: String): List<String> {
         val index = index() ?: return emptyList()
-        val haystack = text.lowercase()
+        val haystack = text.lowercase().squeeze()
         // 긴 것부터 — "시니어 변호사"가 걸리면 "변호사"는 굳이 또 담지 않는다.
         return index.titleWords
-            .filter { it in haystack }
+            .filter { it.squeeze() in haystack }
             .sortedByDescending { it.length }
             .distinct()
     }
