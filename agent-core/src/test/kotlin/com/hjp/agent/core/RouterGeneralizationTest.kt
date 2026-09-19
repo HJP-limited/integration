@@ -54,6 +54,22 @@ class RouterGeneralizationTest {
         }
     }
 
+    @Test
+    fun `calling a family name is a contact search whoever the directory knows`() {
+        listOf("오씨 찾아줘", "정씨 성 가진 사람 찾아줘", "김씨성 가진 사람", "이씨 성을 가진 분").forEach { text ->
+            val plan = DeterministicTurnRouter.route(context(text))
+            assertEquals(text, DialogueAct.CONTACT_SEARCH, DeterministicTurnRouter.act(context(text)))
+            assertTrue("$text -> $plan", plan is TurnRoutePlan.Continue && plan.searchRequired)
+        }
+        // 이름 전체에 붙은 존칭은 성씨 부름이 아니다 — 그 사람을 찾는 말이다.
+        val person = DirectoryNameMatch("김지원씨", "김지원", listOf("C001"), true, false)
+        val named = DeterministicTurnRouter.route(context("김지원씨 찾아줘", directoryMatches = listOf(person)))
+        assertTrue(named.toString(), named is TurnRoutePlan.Continue && named.searchQuery == "김지원")
+        // 실행 요청은 여전히 실행이다.
+        assertEquals("오씨에게 메일 작성해줘", DialogueAct.ACTION_COMPOSE,
+            DeterministicTurnRouter.act(context("오씨에게 메일 작성해줘")))
+    }
+
     // ---- an action command is still an action command -------------------------------------------
 
     @Test

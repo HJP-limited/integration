@@ -51,6 +51,16 @@ final class SearchFieldConstraintPlan {
     final List<String> departments;
     final List<String> companies;
 
+    /**
+     * Family names the query asked for, as single syllables the roll actually uses.
+     *
+     * A requirement, never an ordering hint: "오씨 성을 가진 사람" is a question about who is
+     * called that, and a 옥씨 is not a weaker answer to it. The resolver only ever fills this with
+     * a syllable some stored name begins with, so an invented surname abstains instead of
+     * quietly matching nobody.
+     */
+    final List<String> surnames;
+
     /** Empty unless the plan already knows the answer is nobody. */
     final String abstainReason;
 
@@ -83,6 +93,15 @@ final class SearchFieldConstraintPlan {
     private SearchFieldConstraintPlan(List<String> locations, List<String> titles,
             List<String> departments, List<String> companies, boolean locationRequested,
             boolean locationKnownToRepository, String abstainReason, boolean bareNameAbsent) {
+        this(locations, titles, departments, companies, Collections.<String>emptyList(),
+                locationRequested, locationKnownToRepository, abstainReason, bareNameAbsent);
+    }
+
+    private SearchFieldConstraintPlan(List<String> locations, List<String> titles,
+            List<String> departments, List<String> companies, List<String> surnames,
+            boolean locationRequested, boolean locationKnownToRepository, String abstainReason,
+            boolean bareNameAbsent) {
+        this.surnames = Collections.unmodifiableList(new ArrayList<>(surnames));
         this.departments = Collections.unmodifiableList(new ArrayList<>(departments));
         this.companies = Collections.unmodifiableList(new ArrayList<>(companies));
         this.locations = Collections.unmodifiableList(new ArrayList<>(locations));
@@ -114,19 +133,27 @@ final class SearchFieldConstraintPlan {
     static SearchFieldConstraintPlan of(List<String> locations, List<String> titles,
             List<String> departments, List<String> companies, boolean locationKnownToRepository,
             String abstainReason, boolean bareNameAbsent) {
+        return of(locations, titles, departments, companies, Collections.<String>emptyList(),
+                locationKnownToRepository, abstainReason, bareNameAbsent);
+    }
+
+    static SearchFieldConstraintPlan of(List<String> locations, List<String> titles,
+            List<String> departments, List<String> companies, List<String> surnames,
+            boolean locationKnownToRepository, String abstainReason, boolean bareNameAbsent) {
         if (locations.isEmpty() && titles.isEmpty() && departments.isEmpty() && companies.isEmpty()
-                && (abstainReason == null || abstainReason.isEmpty()) && !bareNameAbsent) {
+                && surnames.isEmpty() && (abstainReason == null || abstainReason.isEmpty())
+                && !bareNameAbsent) {
             return NONE;
         }
-        return new SearchFieldConstraintPlan(locations, titles, departments, companies, !locations.isEmpty(),
-                locationKnownToRepository, abstainReason, bareNameAbsent);
+        return new SearchFieldConstraintPlan(locations, titles, departments, companies, surnames,
+                !locations.isEmpty(), locationKnownToRepository, abstainReason, bareNameAbsent);
     }
 
     /** The same plan, now certain the answer is nobody. */
     SearchFieldConstraintPlan abstaining(String reason) {
         if (abstains()) return this;
-        return new SearchFieldConstraintPlan(locations, titles, departments, companies, locationRequested,
-                locationKnownToRepository, reason, bareNameAbsent);
+        return new SearchFieldConstraintPlan(locations, titles, departments, companies, surnames,
+                locationRequested, locationKnownToRepository, reason, bareNameAbsent);
     }
 
     /** True when the answer is already known to be nobody, whatever the retrievers turn up. */
@@ -140,6 +167,10 @@ final class SearchFieldConstraintPlan {
      * Tied to {@link #locationRequested} — see the note there.
      */
     boolean isStrict() {
+        // Deliberately *not* widened for surnames. A family name is filtered by the matcher either
+        // way, but this flag also decides whether a job title is matched exactly, and a question
+        // like "오씨 성 가진 변호사" must still keep the 고문변호사 — narrowing that was never what
+        // naming a family name asked for.
         return locationRequested;
     }
 
@@ -152,11 +183,12 @@ final class SearchFieldConstraintPlan {
         // An abstention constrains everything, even with no field named: "정하은 명함" resolves no
         // location and no title, yet the answer is already known to be nobody.
         return locations.isEmpty() && titles.isEmpty() && departments.isEmpty() && companies.isEmpty()
-                && !abstains() && !bareNameAbsent;
+                && surnames.isEmpty() && !abstains() && !bareNameAbsent;
     }
 
     @Override public String toString() {
         return "SearchFieldConstraintPlan{locations=" + locations + ", titles=" + titles
+                + ", surnames=" + surnames
                 + ", strict=" + isStrict() + ", locationKnown=" + locationKnownToRepository
                 + ", abstainReason='" + abstainReason + "'}";
     }

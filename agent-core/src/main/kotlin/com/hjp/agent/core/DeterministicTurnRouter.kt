@@ -981,7 +981,14 @@ object DeterministicTurnRouter {
         // 이름인지 아닌지는 문장의 철자가 아니라 저장소가 답한다.
         val namesAKnownPerson = context?.directoryMatches?.any { it.identifiesAPerson } == true
         val peopleQuery = Regex("누구|사람|직원|담당자|관련.*직업").containsMatchIn(raw)
-        if (!ContactReadIntent.hasSearchVerb(raw) && !namesAKnownTitle && !namesAKnownPerson && !peopleQuery) {
+        // 성을 부르는 것 자체가 사람을 가리키는 말이다. 이 관문이 요구하는 "사람" 낱말이
+        // 없어도("이씨 성을 가진 분") 통과시켜야 아래 성씨 규칙까지 닿는다.
+        val callsAFamilyName = FAMILY_NAME_CALL_REGEX.containsMatchIn(raw) &&
+            (ContactReadIntent.hasSearchVerb(raw) || FAMILY_NAME_EVIDENCE.containsMatchIn(raw) ||
+                raw.contains("씨성"))
+        if (!ContactReadIntent.hasSearchVerb(raw) && !namesAKnownTitle && !namesAKnownPerson &&
+            !peopleQuery && !callsAFamilyName
+        ) {
             return false
         }
         val explicitSearchOnly = ContactReadIntent.hasSearchVerb(raw) &&
@@ -1012,6 +1019,15 @@ object DeterministicTurnRouter {
         // 문장을 "대전에 명함 찾아줘"로 바꿔 변호사를 잃었다(실측). 어느 말이 직함인지는
         // 카드가 안다 — 목록을 늘리는 대신 저장소에 묻는다.
         if (namesAKnownTitle || namesAKnownPerson) return true
+        // 성(姓)만 부르는 것도 사람을 고르는 조건이다 — "오씨 찾아줘", "정씨 성 가진 사람".
+        //
+        // 이게 없으면 위 두 조건이 **둘 다** 안 맞아 act=OTHER 로 떨어지고, 검색 의무가 서지
+        // 않아 도구를 부를지 말지가 모델 재량이 된다. 같은 문장인데 오씨는 검색되고 정씨는
+        // 안 되던 것이 그래서였다(노트북 실측: 둘 다 searchRequired=false, 결과만 갈림).
+        // 어느 음절이 실재하는 성인지는 검색층이 명부에 물어 판단하므로, 여기서는 "성을 한
+        // 글자로 부르는 꼴"만 알아보면 된다. 이름 전체에 붙은 존칭("김지원씨")은 낱말 경계
+        // 때문에 여기 걸리지 않는다.
+        if (callsAFamilyName) return true
         // 장소도 회사·부서와 같은 **속성**이다. "분당구에 있는 사람 찾아줘" 는 조건으로 사람을
         // 고르는 말이지 다른 무엇이 아니다.
         //
@@ -1420,6 +1436,19 @@ object DeterministicTurnRouter {
     private val CONTACT_VALUE_REGEX = Regex(
         """[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|(?<!\d)0\d{1,2}[- ]?\d{3,4}[- ]?\d{4}(?!\d)""",
     )
+    /**
+     * 한 글자 성 + 씨 를 낱말로 부른 꼴. "오씨", "정씨 성", "오씨성" — "김지원씨"는 아니다
+     * (앞이 한글이라 걸리지 않는다. "아저씨"도 같은 이유로 빠진다).
+     *
+     * 모양만으로는 부족하다: "오늘 날씨 어때?"의 **날씨**가 성 '날'로 읽혀 날씨 질문이
+     * 명함 검색이 됐다. 그래서 아래에서 검색 동사나 성 낱말을 함께 요구한다. 어느 음절이
+     * 실재하는 성인지는 이 자리에서 알 수 없다 — 그건 명부를 가진 검색층이 답한다.
+     */
+    private val FAMILY_NAME_CALL_REGEX = Regex("(^|[^가-힣])[가-힣]씨(성|[^가-힣]|$)")
+
+    /** 성씨를 말한 문장이라는 증거. 둘 중 하나는 있어야 한다. */
+    private val FAMILY_NAME_EVIDENCE = Regex("성씨|성을|성이|성은| 성 |^성 | 성$")
+
     private val EXECUTION_VERB_REGEX = Regex(
         "(작성|발송|전송|생성|등록|추가)\\s*(?:해\\s*줘|해주세요|해라|하자)|" +
             "(써\\s*줘|보내\\s*줘|만들어\\s*줘|열어\\s*줘|잡아\\s*줘)",

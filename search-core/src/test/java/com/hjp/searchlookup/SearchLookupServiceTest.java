@@ -12,6 +12,86 @@ import java.util.List;
 import org.junit.Test;
 
 public class SearchLookupServiceTest {
+    /**
+     * A family name is a question about who somebody is called, so the answer is every card with
+     * that name and nothing else. Before this, "오씨 성을 가진 사람" left the keyword side with no
+     * usable token at all (오씨 is two syllables, 오 is one) and the semantic axis answered with
+     * whatever sounded close — 옥지수, and a 강성민 whose employer happened to be (주)오션통신.
+     */
+    @Test
+    public void surnameQueryKeepsOnlyThatFamilyNameAndIgnoresLookalikes() {
+        List<BusinessCard> cards = new ArrayList<>();
+        cards.add(card("A1", "오수아", "주식회사 백제"));
+        cards.add(card("A2", "오슬기", "주식회사 네트웍스상사"));
+        cards.add(card("A3", "오하늘", "유한회사 한솔건설"));
+        cards.add(card("B1", "옥지수", "(주) 프라임푸드"));
+        cards.add(card("B2", "옥우진", "유한회사 충청스튜디오"));
+        cards.add(card("C1", "강성민", "(주)오션통신"));
+        SearchLookupService service = new SearchLookupService(cards, new DeterministicModelEngine());
+
+        for (String query : Arrays.asList("오씨 성을 가진 사람 찾아줘", "오씨 성 가진 사람 찾아줘",
+                "오씨성 가진 사람 찾아줘", "성이 오씨인 사람",
+                // What the agent actually hands this layer once the router has shortened it.
+                "오씨")) {
+            RetrievalResponse result = service.retrieve(query, 5, RetrievalMode.HYBRID);
+            assertEquals(query, 3, result.results.size());
+            assertTrue(query, result.cardIds.containsAll(Arrays.asList("A1", "A2", "A3")));
+        }
+    }
+
+    /**
+     * "X씨" without the word 성 is how people are addressed, not a question about family names.
+     * 마이클 첸씨 and 안나 리씨 have the same shape as 오씨 and must still reach their card.
+     */
+    @Test
+    public void honorificNameIsNotReadAsAFamilyNameQuestion() {
+        List<BusinessCard> cards = new ArrayList<>();
+        cards.add(card("D008", "마이클 첸", "주식회사 백제"));
+        cards.add(card("A1", "오수아", "주식회사 백제"));
+        SearchLookupService service = new SearchLookupService(cards, new DeterministicModelEngine());
+
+        RetrievalResponse result = service.retrieve("마이클 첸씨 찾아줘", 5, RetrievalMode.HYBRID);
+        assertTrue(result.results.toString(), result.cardIds.contains("D008"));
+    }
+
+    /**
+     * A family name filters; a job title still only orders. Asking for 변호사 among the 오씨 must
+     * not start hiding the 고문변호사 sitting right there — that looseness is deliberate, and the
+     * surname constraint has no business changing it.
+     */
+    @Test
+    public void surnameFiltersWithoutMakingTitleMatchingStrict() {
+        List<BusinessCard> cards = new ArrayList<>();
+        cards.add(new BusinessCard("O1", "오수아", "", "주식회사 백제", "변호사", "법무팀", "법률",
+                "서울", "", "", "", "", Collections.<String>emptyList()));
+        cards.add(new BusinessCard("O2", "오슬기", "", "주식회사 백제", "고문변호사", "법무팀", "법률",
+                "서울", "", "", "", "", Collections.<String>emptyList()));
+        cards.add(new BusinessCard("K1", "김지수", "", "주식회사 백제", "변호사", "법무팀", "법률",
+                "서울", "", "", "", "", Collections.<String>emptyList()));
+        SearchLookupService service = new SearchLookupService(cards, new DeterministicModelEngine());
+
+        RetrievalResponse result = service.retrieve("오씨 성 가진 변호사", 5, RetrievalMode.HYBRID);
+        assertTrue(result.cardIds.toString(), result.cardIds.containsAll(Arrays.asList("O1", "O2")));
+        assertFalse(result.cardIds.toString(), result.cardIds.contains("K1"));
+    }
+
+    /** A surname nobody carries is an answer of nobody, not a ranked list of near-spellings. */
+    @Test
+    public void surnameAbsentFromTheRollAbstainsInsteadOfOfferingLookalikes() {
+        List<BusinessCard> cards = new ArrayList<>();
+        cards.add(card("A1", "오수아", "주식회사 백제"));
+        cards.add(card("B1", "옥지수", "(주) 프라임푸드"));
+        SearchLookupService service = new SearchLookupService(cards, new DeterministicModelEngine());
+
+        RetrievalResponse result = service.retrieve("남궁씨 성을 가진 사람", 5, RetrievalMode.HYBRID);
+        assertTrue(result.results.toString(), result.results.isEmpty());
+    }
+
+    private static BusinessCard card(String id, String name, String company) {
+        return new BusinessCard(id, name, "", company, "개발자", "개발팀", "it", "서울",
+                "", "", "", "", Collections.<String>emptyList());
+    }
+
     @Test
     public void exactStoredNameKeepsHomonymsButExcludesSemanticNeighbours() {
         List<BusinessCard> cards = new ArrayList<>();

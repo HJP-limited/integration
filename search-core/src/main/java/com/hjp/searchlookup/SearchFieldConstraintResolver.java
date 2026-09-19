@@ -2,6 +2,8 @@ package com.hjp.searchlookup;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Reads a query and works out which fields it actually constrained.
@@ -65,6 +67,14 @@ final class SearchFieldConstraintResolver {
     /** Words that mark the token before them as a person. */
     static final String[] NAME_HONORIFICS = { "씨", "님", "군", "양" };
 
+    /** The sentence has to say 성 as its own word before "X씨" may be read as a family name. */
+    private static final Pattern FAMILY_NAME_WORD =
+            Pattern.compile("(?:^| )성씨?(?:을|이|은|가|는|를)?(?: |$)");
+
+    /** "성이 오", "성은 오씨" — never "성을 가진", where 가 is the start of the next word. */
+    private static final Pattern SURNAME_PHRASE =
+            Pattern.compile("성(?:이|은) *([가-힣])(?:씨|(?![가-힣]))");
+
     private final BusinessCardRepository repository;
 
     private volatile SearchFieldVocabulary cachedVocabulary;
@@ -85,6 +95,20 @@ final class SearchFieldConstraintResolver {
         List<String> titles = new ArrayList<>();
         List<String> departments = new ArrayList<>();
         List<String> companies = namedCompanies(analysis, vocabulary);
+        List<String> surnames = new ArrayList<>();
+        boolean namedAbsentSurname = false;
+        // "성이 오" / "성은 오씨" — the syllable is one character, so the token loop below never
+        // sees it. Read it off the sentence instead, and only when nothing else follows it as a
+        // name would: "성을 가진" must not be read as the surname 가.
+        // 사람은 띄어쓰기를 지키지 않는다 — "오씨 성", "오씨성", "성이 오씨" 가 모두 같은 질문이다.
+        boolean asksAboutFamilyName = FAMILY_NAME_WORD.matcher(analysis.normalizedQuery).find()
+                || analysis.normalizedQuery.contains("씨성");
+        Matcher phrase = SURNAME_PHRASE.matcher(analysis.normalizedQuery);
+        while (phrase.find()) {
+            String syllable = phrase.group(1);
+            if (vocabulary.surnames.contains(syllable)) addDistinct(surnames, syllable);
+            else namedAbsentSurname = true;
+        }
         boolean namedRealPerson = false;
         boolean namedAbsentPersonWithHonorific = false;
         boolean namedAbsentBareName = false;
@@ -112,6 +136,44 @@ final class SearchFieldConstraintResolver {
                 addDistinct(locations, token);
                 continue;
             }
+            // "오씨" is two syllables, so it is neither a bare name (three) nor an honorific
+            // name (three or more). Without this it fell through as an ordinary word, matched
+            // nothing in the index, and left the semantic axis to answer a question about
+            // spelling with whatever sounded close.
+            //
+            // Only when the sentence says 성 out loud. "마이클 첸씨 찾아줘" and "안나 리씨 찾아줘"
+            // have the same two-syllable shape, and they name a person — reading 첸/리 as a family
+            // name made the search abstain on somebody who is in the address book.
+            // "오씨성" — 질문과 성씨가 한 낱말에 붙어 있다.
+            if (token.length() >= 3 && token.startsWith("씨성", 1)) {
+                String glued = token.substring(0, 1);
+                if (vocabulary.surnames.contains(glued)) {
+                    addDistinct(surnames, glued);
+                    continue;
+                }
+                if (isAllHangul(glued)) {
+                    namedAbsentSurname = true;
+                    continue;
+                }
+            }
+            if (token.length() == 2 && token.endsWith("씨")) {
+                String syllable = token.substring(0, 1);
+                // The roll decides. A syllable some stored name begins with is a family name
+                // whatever else the sentence says — which matters because the sentence does not
+                // always survive: the agent may hand this layer the short form ("정씨") after the
+                // router has dropped 성 from "정씨 성 가진 사람 찾아줘".
+                if (vocabulary.surnames.contains(syllable)) {
+                    addDistinct(surnames, syllable);
+                    continue;
+                }
+                // 첸씨·리씨 have the same shape and name a person. Only an explicit 성 turns an
+                // unknown syllable into "this address book has no such family name"; without it
+                // the token stays whatever the rest of the resolver makes of it.
+                if (asksAboutFamilyName && isAllHangul(syllable)) {
+                    namedAbsentSurname = true;
+                    continue;
+                }
+            }
             NameReading name = readName(token, vocabulary);
             if (name != NameReading.NOT_A_NAME) {
                 if (vocabulary.someoneIsNamed(personNameStem(token))) {
@@ -131,7 +193,11 @@ final class SearchFieldConstraintResolver {
         String abstainReason = "";
         // An honorific settles it: 씨/님/군/양 point at a person, so a name nobody carries is an
         // answer of nobody — whatever else the sentence mentions.
-        if (namedAbsentPersonWithHonorific) {
+        if (namedAbsentSurname && surnames.isEmpty()) {
+            // The sentence asked for a family name this address book does not carry. Saying so is
+            // the answer; ranking similar-sounding names would invent one.
+            abstainReason = "NO_CARD_WITH_REQUESTED_SURNAME";
+        } else if (namedAbsentPersonWithHonorific) {
             abstainReason = "NO_CARD_WITH_REQUESTED_NAME";
         } else if (!locations.isEmpty() && !known && !namedRealPerson) {
             // A query that already named somebody real is not abstained on a stray token's place
@@ -146,11 +212,11 @@ final class SearchFieldConstraintResolver {
         boolean bareNameAbsent = namedAbsentBareName && !namedRealPerson && abstainReason.isEmpty();
 
         if (locations.isEmpty() && titles.isEmpty() && departments.isEmpty() && companies.isEmpty()
-                && abstainReason.isEmpty() && !bareNameAbsent) {
+                && surnames.isEmpty() && abstainReason.isEmpty() && !bareNameAbsent) {
             return SearchFieldConstraintPlan.NONE;
         }
-        return SearchFieldConstraintPlan.of(
-                locations, titles, departments, companies, known, abstainReason, bareNameAbsent);
+        return SearchFieldConstraintPlan.of(locations, titles, departments, companies, surnames,
+                known, abstainReason, bareNameAbsent);
     }
 
     private static List<String> namedCompanies(QueryAnalysis analysis, SearchFieldVocabulary vocabulary) {

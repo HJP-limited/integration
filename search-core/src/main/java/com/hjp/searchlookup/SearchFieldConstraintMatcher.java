@@ -35,6 +35,14 @@ final class SearchFieldConstraintMatcher {
             return false;
         }
 
+        if (!plan.surnames.isEmpty() && !carriesRequestedSurname(card, plan)) {
+            // Who somebody is called is decided by their name alone. A 오 in the employer
+            // ((주)오션통신) or anywhere else in the card is not a family name, and the semantic
+            // axis cannot tell the difference — which is exactly how 강성민 was answering
+            // "오씨 성을 가진 사람".
+            return false;
+        }
+
         if (!plan.locations.isEmpty()) {
             // Where somebody works is what their location and address say. A company name, a memo
             // or a tag can mention a city for a hundred reasons — a head office, a client, a trip —
@@ -100,7 +108,7 @@ final class SearchFieldConstraintMatcher {
             // Organizational units are exact requirements even without a location. Keep the
             // existing soft-title ordering, but only among cards in the requested department.
             List<SearchResult> scoped = candidates;
-            if (!plan.departments.isEmpty() || !plan.companies.isEmpty()) {
+            if (!plan.departments.isEmpty() || !plan.companies.isEmpty() || !plan.surnames.isEmpty()) {
                 scoped = new ArrayList<>();
                 for (SearchResult candidate : candidates) {
                     if (candidate != null && matches(candidate.card, plan)) scoped.add(candidate);
@@ -132,6 +140,16 @@ final class SearchFieldConstraintMatcher {
         }
         exact.addAll(rest);
         return Collections.unmodifiableList(exact);
+    }
+
+    /** The family name is the first syllable of the stored name, not a substring of the card. */
+    private static boolean carriesRequestedSurname(BusinessCard card, SearchFieldConstraintPlan plan) {
+        String name = SearchFieldVocabulary.normalize(card.name).replace(" ", "");
+        if (name.isEmpty()) return false;
+        for (String surname : plan.surnames) {
+            if (!surname.isEmpty() && name.startsWith(surname)) return true;
+        }
+        return false;
     }
 
     private static List<String> titleWords(BusinessCard card) {
