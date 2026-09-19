@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HJP 노트북 테스트</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --line: #e2e5ea; --text: #16181d; --muted: #6b7280;
+    --accent: #2f6fed; --accent-soft: #e8efff; --warn-bg: #fff8e6; --warn-line: #f0d48a;
+    --tool: #0f766e; --tool-bg: #e6f5f3; --error: #b42318; --error-bg: #fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14161a; --panel: #1b1e24; --line: #2c313a; --text: #e8eaee; --muted: #9aa3b0;
+      --accent: #6c9bff; --accent-soft: #223050; --warn-bg: #2a2416; --warn-line: #5c4d21;
+      --tool: #5eead4; --tool-bg: #16302d; --error: #ff8a80; --error-bg: #3a1f1d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --panel: #1b1e24; --line: #2c313a; --text: #e8eaee; --muted: #9aa3b0;
+    --accent: #6c9bff; --accent-soft: #223050; --warn-bg: #2a2416; --warn-line: #5c4d21;
+    --tool: #5eead4; --tool-bg: #16302d; --error: #ff8a80; --error-bg: #3a1f1d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 120px; }
+  header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  h1 { font-size: 19px; margin: 0; letter-spacing: -0.2px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .notice { background: var(--warn-bg); border-color: var(--warn-line); }
+  .notice h2 { font-size: 13px; margin: 0 0 8px; text-transform: none; letter-spacing: 0; }
+  .notice ul { margin: 0; padding-left: 18px; }
+  .notice li { font-size: 13px; margin: 3px 0; }
+  .meta-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+  .meta-grid dt { color: var(--muted); }
+  .meta-grid dd { margin: 0; word-break: break-all; font-variant-numeric: tabular-nums; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tabs button {
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    padding: 7px 14px; border-radius: 999px; cursor: pointer; font-size: 14px;
+  }
+  .tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .turn { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+  .turn:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+  .q { font-weight: 600; margin-bottom: 8px; }
+  .q::before { content: "질문 "; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .a { white-space: pre-wrap; }
+  .a.failed { color: var(--error); background: var(--error-bg); border-radius: 8px; padding: 8px 10px; }
+  .trace { margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; }
+  .trace div { font-size: 12.5px; color: var(--tool); background: var(--tool-bg); border-radius: 6px; padding: 4px 8px; }
+  .facts { margin-top: 8px; font-size: 12.5px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  .facts code { font-family: ui-monospace, Consolas, monospace; color: var(--text); }
+  .drafts { margin-top: 8px; font-size: 12.5px; }
+  .drafts div { background: var(--accent-soft); border-radius: 6px; padding: 6px 8px; margin-top: 4px; word-break: break-all; }
+  .drafts div.args { background: transparent; border: 1px dashed var(--line); color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .composer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); }
+  .composer .inner { max-width: 980px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 8px; }
+  input[type="text"] {
+    flex: 1; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: 15px; font-family: inherit;
+  }
+  button.primary { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font-size: 15px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; cursor: pointer; font-size: 14px; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .samples { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .samples button { font-size: 12.5px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+  .fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 14px; margin-top: 10px; }
+  .fields dt { color: var(--muted); }
+  .fields dd { margin: 0; }
+  .regions { margin-top: 10px; font-size: 12.5px; color: var(--muted); max-height: 220px; overflow: auto; }
+  .regions div { padding: 2px 0; }
+  label.check { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  .spin::after { content: "…"; animation: dots 1.2s steps(4, end) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>HJP 노트북 테스트</h1>
+    <span class="sub">앱과 같은 커널·도구·검색을 이 PC에서 실행합니다</span>
+  </header>
+
+  <section class="card notice">
+    <h2>폰과 같은 것 / 다른 것</h2>
+    <ul id="parity"><li class="hint">상태 확인 중…</li></ul>
+  </section>
+
+  <section class="card">
+    <dl class="meta-grid" id="status"></dl>
+  </section>
+
+  <nav class="tabs">
+    <button id="tab-chat" aria-selected="true">대화</button>
+    <button id="tab-ocr" aria-selected="false">명함 인식</button>
+  </nav>
+
+  <section id="panel-chat">
+    <div class="card" id="turns">
+      <p class="hint" id="empty">질문을 입력하면 실제 Gemma가 이 PC에서 답합니다. 첫 답변은 30초 이상 걸릴 수 있습니다.</p>
+      <div class="samples">
+        <button>문지영씨 전화번호</button>
+        <button>데이터분석가 누구 있지</button>
+        <button>손다은 찾아줘</button>
+        <button>그 사람 회사 어디야</button>
+        <button>명함 몇 장 있어</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="panel-ocr" hidden>
+    <div class="card">
+      <p class="hint">명함 사진을 올리면 앱과 같은 검출·인식·KIE 모델로 필드를 뽑습니다.</p>
+      <p style="margin:10px 0 0">
+        <input type="file" id="file" accept="image/*">
+        <label class="check"><input type="checkbox" id="save"> 인식 후 DB에 저장(검색 색인 즉시 갱신)</label>
+      </p>
+      <div id="ocr-out"></div>
+    </div>
+  </section>
+</div>
+
+<div class="composer">
+  <div class="inner">
+    <input type="text" id="q" placeholder="질문을 입력하세요" autocomplete="off">
+    <button class="primary" id="send">보내기</button>
+    <button class="ghost" id="reset" title="세션과 네이티브 대화를 새로 시작합니다">새 대화</button>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let busy = false;
+
+function esc(text) {
+  const node = document.createElement("div");
+  node.textContent = text;
+  return node.innerHTML;
+}
+
+async function loadStatus() {
+  const response = await fetch("/api/status");
+  const data = await response.json();
+  $("parity").innerHTML = data.parity.map((line) => "<li>" + esc(line) + "</li>").join("");
+  const model = data.model || {};
+  const rows = [
+    ["모델 경계", model.boundary || "-"],
+    ["모델 파일", model.path || "-"],
+    ["아티팩트", model.artifactId ? model.artifactId + " · " + model.identifiedBy : "-"],
+    ["SHA-256", model.sha256 || "-"],
+    ["컨텍스트 한도", model.contextLimitTokens ? model.contextLimitTokens + " tokens" : "-"],
+    ["임베더", data.embedder],
+    ["DB", data.db + " · " + data.cards + "장"],
+  ];
+  $("status").innerHTML = rows
+    .map(([key, value]) => "<dt>" + esc(key) + "</dt><dd>" + esc(String(value)) + "</dd>")
+    .join("");
+}
+
+function newTurn(question) {
+  $("empty")?.remove();
+  const turn = document.createElement("div");
+  turn.className = "turn";
+  turn.innerHTML =
+    '<div class="q">' + esc(question) + "</div>" +
+    '<div class="trace"></div>' +
+    '<div class="a spin"></div>' +
+    '<div class="facts"></div>' +
+    '<div class="drafts"></div>';
+  $("turns").appendChild(turn);
+  turn.scrollIntoView({ behavior: "smooth", block: "end" });
+  return {
+    trace: turn.querySelector(".trace"),
+    answer: turn.querySelector(".a"),
+    facts: turn.querySelector(".facts"),
+    drafts: turn.querySelector(".drafts"),
+    node: turn,
+  };
+}
+
+function ask(question) {
+  if (busy || !question.trim()) return;
+  busy = true;
+  $("send").disabled = true;
+  const view = newTurn(question);
+  const source = new EventSource("/api/turn?text=" + encodeURIComponent(question));
+  let streamed = "";
+
+  source.onmessage = (message) => {
+    const event = JSON.parse(message.data);
+    if (event.type === "tool") {
+      const line = document.createElement("div");
+      line.textContent = (event.phase === "start" ? "▶ " : "✓ ") + event.text;
+      view.trace.appendChild(line);
+    } else if (event.type === "token") {
+      streamed += event.text;
+      view.answer.classList.remove("spin");
+      view.answer.textContent = streamed;
+    } else if (event.type === "final") {
+      if (!streamed) {
+        view.answer.classList.remove("spin");
+        view.answer.textContent = event.text;
+      }
+    } else if (event.type === "userError") {
+      view.answer.classList.remove("spin");
+      view.answer.classList.add("failed");
+      view.answer.textContent = event.text;
+    } else if (event.type === "done") {
+      source.close();
+      busy = false;
+      $("send").disabled = false;
+      view.answer.classList.remove("spin");
+      if (event.failed) view.answer.classList.add("failed");
+      if (event.answer) view.answer.textContent = event.answer;
+      const tools = event.tools.length ? event.tools.join(" → ") : "(없음)";
+      const ids = event.cardIds.length ? event.cardIds.join(", ") : "(없음)";
+      view.facts.innerHTML =
+        "<span>실행된 도구 <code>" + esc(tools) + "</code></span>" +
+        "<span>명함ID <code>" + esc(ids) + "</code></span>" +
+        "<span>" + event.ms + "ms</span>";
+      view.drafts.innerHTML = (event.toolArguments || [])
+        .map((call) => '<div class="args">' + esc(call) + "</div>")
+        .concat(event.drafts.map((draft) => "<div>" + esc(draft) + "</div>"))
+        .join("");
+      view.node.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  };
+
+  source.onerror = () => {
+    source.close();
+    if (busy) {
+      busy = false;
+      $("send").disabled = false;
+      view.answer.classList.remove("spin");
+      view.answer.classList.add("failed");
+      view.answer.textContent = "서버 연결이 끊겼습니다. 콘솔 로그를 확인하세요.";
+    }
+  };
+}
+
+$("send").addEventListener("click", () => {
+  const value = $("q").value;
+  $("q").value = "";
+  ask(value);
+});
+$("q").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") $("send").click();
+});
+$("reset").addEventListener("click", async () => {
+  if (busy) return;
+  await fetch("/api/reset", { method: "POST" });
+  $("turns").innerHTML = '<p class="hint">새 대화입니다. 이전 턴의 대상·후보는 모두 지워졌습니다.</p>';
+});
+document.querySelectorAll(".samples button").forEach((button) => {
+  button.addEventListener("click", () => ask(button.textContent));
+});
+
+$("tab-chat").addEventListener("click", () => switchTab("chat"));
+$("tab-ocr").addEventListener("click", () => switchTab("ocr"));
+function switchTab(name) {
+  $("tab-chat").setAttribute("aria-selected", String(name === "chat"));
+  $("tab-ocr").setAttribute("aria-selected", String(name === "ocr"));
+  $("panel-chat").hidden = name !== "chat";
+  $("panel-ocr").hidden = name !== "ocr";
+}
+
+$("file").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const save = $("save").checked;
+  $("ocr-out").innerHTML = '<p class="hint spin">인식 중</p>';
+  try {
+    const response = await fetch("/api/ocr?save=" + (save ? "true" : "false"), {
+      method: "POST",
+      body: file,
+    });
+    const data = await response.json();
+    if (data.error) {
+      $("ocr-out").innerHTML = '<p class="a failed">' + esc(data.error) + "</p>";
+      return;
+    }
+    const fields = data.fields
+      .map((field) => "<dt>" + esc(field.icon + " " + field.label) + "</dt><dd>" + esc(field.value) + "</dd>")
+      .join("");
+    const regions = data.regions
+      .map((region) => "<div>[" + region.score.toFixed(2) + "] " + esc(region.text) + "</div>")
+      .join("");
+    $("ocr-out").innerHTML =
+      '<p class="hint">인식 영역 ' + data.regions.length + "개 · OCR " + data.ocrMs + "ms" +
+      (data.savedCardId ? " · 저장됨 " + esc(data.savedCardId) + " (전체 " + data.cards + "장)" : "") +
+      "</p>" +
+      '<dl class="fields">' + fields + "</dl>" +
+      '<div class="regions">' + regions + "</div>";
+    if (data.savedCardId) loadStatus();
+  } catch (error) {
+    $("ocr-out").innerHTML = '<p class="a failed">' + esc(String(error)) + "</p>";
+  } finally {
+    event.target.value = "";
+  }
+});
+
+loadStatus();
+$("q").focus();
+</script>
+</body>
+</html>

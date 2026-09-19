@@ -116,11 +116,18 @@ private class DesktopRuntimeEnvironment(
  * search_contacts 를 부르는가" 같은 질문에 답하려면 도구 이름이 필요하다. 위임만 하고
  * 결과는 바꾸지 않는다.
  */
-private class RecordingToolExecutor(private val delegate: ToolExecutor) : ToolExecutor {
+internal class RecordingToolExecutor(private val delegate: ToolExecutor) : ToolExecutor {
     val calls = mutableListOf<String>()
     val contactIds = linkedSetOf<String>()
 
-    fun clear() { calls.clear(); contactIds.clear() }
+    /**
+     * 도구에 **실제로 들어간 인자**. 이름만으로는 "검색은 돌았는데 왜 못 찾나"를 못 본다 —
+     * 라우터나 모델이 질의를 줄여 보내면 화면에는 search_contacts 한 줄만 남고, 무엇을
+     * 검색했는지는 로그를 뒤져야 알 수 있었다.
+     */
+    val callArguments = mutableListOf<String>()
+
+    fun clear() { calls.clear(); contactIds.clear(); callArguments.clear() }
 
     override suspend fun execute(
         call: ModelToolCall,
@@ -128,6 +135,7 @@ private class RecordingToolExecutor(private val delegate: ToolExecutor) : ToolEx
         context: ToolExecutionContext,
     ): ToolExecutionResult {
         calls += call.modelToolName
+        callArguments += call.modelToolName + " " + call.arguments.toString()
         return delegate.execute(call, snapshot, context).also { result ->
             if (result is ToolExecutionResult.Success) {
                 (result.data["card_id"] as? JsonPrimitive)?.content?.let(contactIds::add)
@@ -139,7 +147,7 @@ private class RecordingToolExecutor(private val delegate: ToolExecutor) : ToolEx
     }
 }
 
-private class DesktopAgent(
+internal class DesktopAgent(
     dbPath: String,
     embedModelDir: File,
     autoConfirm: Boolean = false,
@@ -161,6 +169,9 @@ private class DesktopAgent(
 
     private val directory = RepositoryContactDirectory(repository)
 
+    /** What the app would have handed to an external screen. Desktop opens nothing. */
+    val externalDrafts = mutableListOf<String>()
+
     private val plugins = listOf(
         SearchContactsPlugin(backend),
         CountContactsPlugin(backend),
@@ -174,6 +185,7 @@ private class DesktopAgent(
             override fun isAvailable() = true
             override suspend fun open(draft: CalendarDraft): Boolean {
                 println("      [SIMULATED calendar; no external app opened] $draft")
+                externalDrafts += "SIMULATED calendar: $draft"
                 return true
             }
         }),
@@ -181,6 +193,7 @@ private class DesktopAgent(
             override fun isAvailable(channel: MessageChannel?) = true
             override suspend fun open(draft: MessageDraft): Boolean {
                 println("      [SIMULATED compose; nothing sent] $draft")
+                externalDrafts += "SIMULATED compose: $draft"
                 return true
             }
         }),
@@ -195,7 +208,7 @@ private class DesktopAgent(
         Locale.KOREA.toLanguageTag(),
     )
 
-    private val deployment = if (actualGemma) ModelDeploymentResolver.resolve(
+    val deployment = if (actualGemma) ModelDeploymentResolver.resolve(
         File(System.getenv("HJP_GEMMA_MODEL")
             ?: File(repoRoot.parentFile, "HJP_limitededition-main/models/gemma-4-E2B-it.litertlm").path),
         digestProvider = CachingArtifactDigestProvider(),
@@ -226,6 +239,15 @@ private class DesktopAgent(
 
     val embedderStatus: String = "ONNX EmbeddingGemma (${embedModelDir.name}); Android TFLite와 형식이 다름"
 
+    /**
+     * 앱이 새 명함을 저장한 뒤 하는 일과 같은 자리. 이름 색인과 임베딩을 즉시 다시 세운다 —
+     * 저장 직후의 검색이 방금 넣은 명함을 못 찾으면 그건 앱과 다른 동작이다.
+     */
+    suspend fun onCardsChanged() {
+        directory.invalidate()
+        backend.refreshAfterCardChange()
+    }
+
     suspend fun prepareModel() {
         if (!actualGemma) return
         val environment = DesktopRuntimeEnvironment(false)
@@ -247,20 +269,20 @@ private class DesktopAgent(
  * 저장소 루트. Gradle 은 모듈 디렉터리에서 실행하므로 상대경로가 `desktop/` 기준이 된다 —
  * 그대로 두면 시드를 못 찾고 조용히 빈 DB 로 돈다(예전에 실제로 그랬다).
  */
-private val repoRoot: File by lazy {
+internal val repoRoot: File by lazy {
     generateSequence(File(".").canonicalFile) { it.parentFile }
         .firstOrNull { File(it, "settings.gradle.kts").isFile }
         ?: error("프로젝트 루트를 찾지 못했습니다.")
 }
 
-private val DEFAULT_MODEL_DIR get() = File(repoRoot, "app/src/main/assets/ocr").path
+internal val DEFAULT_MODEL_DIR get() = File(repoRoot, "app/src/main/assets/ocr").path
 private val DEFAULT_SEED get() = File(repoRoot, "app/src/main/assets/cards/cards_seed.json")
-private val DEFAULT_DB get() = System.getenv("HJP_DESKTOP_DB") ?: File(repoRoot, "build/hjp-desktop.db").path
+internal val DEFAULT_DB get() = System.getenv("HJP_DESKTOP_DB") ?: File(repoRoot, "build/hjp-desktop.db").path
 
 /**
  * Required host embedding export. Missing models stop the runner; no keyword fallback.
  */
-private val EMBED_MODEL_DIR: File by lazy {
+internal val EMBED_MODEL_DIR: File by lazy {
     System.getenv("HJP_EMBED_MODEL_DIR")?.let { File(it) }
         ?: File(repoRoot.parentFile, "HJP_limitededition-main/models/embeddinggemma-300m-onnx")
 }
@@ -274,6 +296,7 @@ private fun usage(): Nothing {
           import <이미지> [모델디렉터리]   인식해서 DB 에 저장 (OCR→검색 연결 확인)
           search <질의>                   도구가 쓰는 것과 같은 검색 경로
           turn [--gemma] [--yes] <질의1>|<질의2>|…   멀티턴 — 한 세션으로 연속 처리 ('|' 로 구분)
+          serve [--port 8765] [--yes] [--rules]     브라우저 테스트용 로컬 웹 UI (기본: 실제 Gemma)
                                           --gemma: 실제 배포 Gemma 실행 (필수 모델 누락 시 중단)
                                           --yes 는 확인이 필요한 도구(명함 수정)를 승인한다
 
@@ -297,11 +320,12 @@ fun main(args: Array<String>) {
         "import" -> runImport(args.drop(1))
         "search" -> runSearch(args.drop(1))
         "turn" -> runTurns(args.drop(1))
+        "serve" -> runServe(args.drop(1))
         else -> usage()
     }
 }
 
-private fun openAgent(warmUp: Boolean = false, autoConfirm: Boolean = false, actualGemma: Boolean = false): DesktopAgent {
+internal fun openAgent(warmUp: Boolean = false, autoConfirm: Boolean = false, actualGemma: Boolean = false): DesktopAgent {
     File(DEFAULT_DB).parentFile?.mkdirs()
     val agent = DesktopAgent(DEFAULT_DB, EMBED_MODEL_DIR, autoConfirm, actualGemma)
     seedIfEmpty(agent)
@@ -366,7 +390,7 @@ private fun seedIfEmpty(agent: DesktopAgent) {
     println("시드 ${cards.size}장 적재")
 }
 
-private fun loadOcr(modelDirArg: String?): Pair<OcrPipeline, KieParser> {
+internal fun loadOcr(modelDirArg: String?): Pair<OcrPipeline, KieParser> {
     val modelDir = File(modelDirArg ?: DEFAULT_MODEL_DIR)
     if (!modelDir.isDirectory) {
         System.err.println("모델 디렉터리가 없다: ${modelDir.absolutePath}")
