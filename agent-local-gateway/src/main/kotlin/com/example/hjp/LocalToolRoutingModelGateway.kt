@@ -262,6 +262,13 @@ private class LocalToolRoutingModelSession(
             pendingAction = null
             return unavailable("명함 상세 조회")
         }
+        // The deterministic router may have resolved an ordinal/name directly onto a persisted
+        // candidate for this turn. That card id outranks the parser's surface query ("첫 번째
+        // 사람"), which is not a searchable name and previously caused an unnecessary search after
+        // get_current_datetime. It is still fresh-read below; only the acquisition search is skipped.
+        turnContext?.groundedCardId?.takeIf(String::isNotBlank)?.let { grounded ->
+            return getContactToolCall(grounded, contactPurpose())
+        }
         val verified = turnContext?.memory?.selectedContact?.takeIf { it.isActionable }
         // 지시어("그 사람에게 메일 써줘")는 **이름이 아니라 가리킴**이다. 이걸 검색어로 넘기면
         // '그 사람에게'라는 이름을 찾다가 0건이 나오고, 대화는 이미 누구인지 아는 상태인데도

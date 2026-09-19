@@ -205,20 +205,12 @@ class SearchContactsPlugin(private val backend: ContactSearchBackend) :
         val output = SearchContactsOutput(response.hits.map { hit -> with(hit.card) {
             SearchContactItem(id, name, company, title, hit.matchSummary, hit.score)
         } }, response.mode, response.fallbackUsed, response.engine)
-        val duplicateNames = output.results.groupingBy { it.name }.eachCount()
-        val explicitFocus = output.results.firstOrNull { item ->
-            duplicateNames[item.name] == 1 &&
-                input.query.replace(Regex("\\s+"), "").contains(item.name.replace(Regex("\\s+"), ""))
-        }
-        val explicitSimilarNameMiss = input.query
-            .split(Regex("\\s+"))
-            .map { it.removeSuffix("씨").removeSuffix("님") }
-            .filter { token -> token.length in 2..4 && token.all(::isHangulSyllable) }
-            .any { token -> output.results.any { item ->
-                token != item.name && editDistance(token, item.name) <= 1
-            } }
-        val focus = explicitFocus ?: output.results.firstOrNull()
-            ?.takeIf { !explicitSimilarNameMiss && duplicateNames[it.name] == 1 }
+        // A ranked first hit is still only a candidate. Advertising it as focus while Typed Memory
+        // deliberately keeps selectedContact=null for a multi-result search created two conflicting
+        // authorities and made the UI/model look as though the user had confirmed somebody. Only a
+        // genuinely single-result search may carry focus; explicit candidate selection is owned by
+        // the router and persisted by ToolResultProjector.selectCandidate.
+        val focus = output.results.singleOrNull()
         val ids = buildJsonObject {
             put("card_ids", JsonArray(output.results.map { JsonPrimitive(it.cardId) }))
             put("results", JsonArray(output.results.map { item ->
@@ -302,28 +294,6 @@ private val UPDATABLE_FIELDS = setOf(
     "name", "name_en", "company", "department", "title", "industry", "location",
     "phone", "mobile", "email", "address", "website", "memo",
 )
-
-private fun isHangulSyllable(char: Char): Boolean = char.code in 0xAC00..0xD7A3
-
-private fun editDistance(left: String, right: String): Int {
-    if (left == right) return 0
-    if (left.isEmpty()) return right.length
-    if (right.isEmpty()) return left.length
-    var previous = IntArray(right.length + 1) { it }
-    left.forEachIndexed { leftIndex, leftChar ->
-        val current = IntArray(right.length + 1)
-        current[0] = leftIndex + 1
-        right.forEachIndexed { rightIndex, rightChar ->
-            current[rightIndex + 1] = minOf(
-                current[rightIndex] + 1,
-                previous[rightIndex + 1] + 1,
-                previous[rightIndex] + if (leftChar == rightChar) 0 else 1,
-            )
-        }
-        previous = current
-    }
-    return previous[right.length]
-}
 
 private fun BusinessCardRecord.toJson(): JsonObject = buildJsonObject {
     put("card_id", id); put("name", name); put("name_en", nameEn); put("company", company)

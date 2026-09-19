@@ -165,6 +165,27 @@ class ContactPluginsTest {
     }
 
     @Test
+    fun `multiple search results never advertise the first candidate as confirmed focus`() = runBlocking {
+        val backend = RyeongContactSearchBackend(fixtureRepository(listOf(
+            BusinessCardRecord("room-1", "서수", title = "AI 개발자"),
+            BusinessCardRecord("room-2", "오하늘", title = "AI 개발자"),
+        )))
+        val result = SearchContactsPlugin(backend).execute(
+            ToolRequest(
+                "search-multiple",
+                ContactToolContracts.Search.capabilityId,
+                ContactToolContracts.Search.version,
+                buildJsonObject { put("query", "AI 개발자") },
+            ),
+            ToolExecutionContext("session", "turn", "ko-KR", "Asia/Seoul"),
+        ) as ToolExecutionResult.Success
+
+        val state = result.sessionUpdates.single().value.toString()
+        assertFalse(state, state.contains("focus_card_id"))
+        assertFalse(state, state.contains("focus_name"))
+    }
+
+    @Test
     fun `model embeddings persist through repository adapter and hybrid uses rrf`() = runBlocking {
         val repository = EmbeddingFixtureRepository(listOf(
             BusinessCardRecord("room-ai", "오성령", company = "코어AI", memo = "머신러닝"),

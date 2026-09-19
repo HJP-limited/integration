@@ -494,7 +494,16 @@ object DeterministicTurnRouter {
                         ClarifyReason.UNGROUNDED_REFERENCE,
                     ),
                 )
-            return targetedPlan(raw, candidate.cardId, candidate.name, DialogueAct.CONTACT_SELECTION)
+            // The ordinal establishes *who*. It must not erase what the same sentence asks us to
+            // do. Classifying "첫 번째 사람과 일정 잡아줘" as CONTACT_SELECTION made the kernel
+            // restrict the whole turn to read tools, so its correctly grounded calendar call was
+            // rejected as a stale side effect. Keep CONTACT_SELECTION for a pure selection/read,
+            // but preserve a terminal action when the utterance contains one.
+            val requestedAct = actOf(raw, context)
+            val routedAct = requestedAct.takeIf {
+                it in setOf(DialogueAct.ACTION_COMPOSE, DialogueAct.ACTION_CALENDAR, DialogueAct.ACTION_UPDATE)
+            } ?: DialogueAct.CONTACT_SELECTION
+            return targetedPlan(raw, candidate.cardId, candidate.name, routedAct)
         }
 
         // An attribute noun at the front of a sentence means "그 사람의 …" only when the sentence is

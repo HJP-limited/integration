@@ -357,18 +357,6 @@ class AgentKernel(
             ) {
                 workflow.seedContactSearchIntent()
             }
-            // A previous ambiguous search remains an unresolved contact obligation until the
-            // user chooses a candidate. Carry that typed fact into contact-bound turns so the
-            // model cannot start a calendar/compose/update prerequisite against nobody (or an old
-            // focus). Standalone non-contact calendar requests are unaffected by this flag.
-            if (session.conversationMemory.selectedContact == null &&
-                session.conversationMemory.candidateContacts.size > 1 &&
-                workflow.contactReferenceRequested()
-            ) {
-                workflow.seedUnresolvedContactObligation(
-                    session.conversationMemory.candidateContacts.size,
-                )
-            }
             // Session focus is not the same thing as this turn's target. A card the session has
             // verified stays in memory so a later "그 사람에게 메일 써줘" still works, but it becomes
             // *this* turn's contact only when this turn actually refers to somebody — see
@@ -444,6 +432,22 @@ class AgentKernel(
                 }
             (turnTarget as? TurnContactTargetResolver.Target.Confirmed)
                 ?.let { workflow.seedTrustedContactProvenance(it.cardId) }
+            // Ambiguity is a property of the target *after* this turn has been routed. The old
+            // ordering seeded this flag from the previous turn's multi-candidate memory before an
+            // explicit name/ordinal had a chance to become [currentTarget]. The candidate was then
+            // promoted correctly, but the sticky workflow flag still rejected datetime/get/calendar
+            // as if nobody had been selected. Seed it only when routing failed to establish a
+            // trusted target; genuine namesakes therefore remain blocked while an explicit persisted
+            // candidate becomes actionable in this same turn.
+            if (currentTarget == null &&
+                session.conversationMemory.selectedContact == null &&
+                session.conversationMemory.candidateContacts.size > 1 &&
+                workflow.contactReferenceRequested()
+            ) {
+                workflow.seedUnresolvedContactObligation(
+                    session.conversationMemory.candidateContacts.size,
+                )
+            }
             // Retire it before the model runs, so no path in this turn or the next can reach it
             // without a fresh verification of whoever the user actually named.
             if (staleFocusCardId != null && isCurrent(generation)) {
