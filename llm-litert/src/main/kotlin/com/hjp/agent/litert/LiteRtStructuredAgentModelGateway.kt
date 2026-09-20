@@ -1,5 +1,6 @@
 package com.hjp.agent.litert
 
+import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
@@ -401,9 +402,11 @@ class LiteRtStructuredAgentModelGateway(
                 )
                 withContext(Dispatchers.Default) { candidate.initialize() }
                 engine = candidate
+                Log.i(TAG, "LiteRT-LM structured backend initialized: ${backend.name}")
                 return@withLock candidate
             } catch (error: Throwable) {
                 candidate?.close()
+                Log.w(TAG, "LiteRT-LM structured backend initialization failed: ${backend.name}", error)
                 lastError = error
             }
         }
@@ -416,6 +419,8 @@ class LiteRtStructuredAgentModelGateway(
     }
 
     companion object {
+        private const val TAG = "HjpLiteRt"
+
         /** A stalled native stage must fail the turn, not hang the UI. */
         const val DEFAULT_STAGE_TIMEOUT_MILLIS = 120_000L
 

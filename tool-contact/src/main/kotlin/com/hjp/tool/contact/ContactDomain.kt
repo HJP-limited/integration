@@ -36,6 +36,9 @@ interface MutableBusinessCardRepository : BusinessCardRepository {
         clearFields: Set<String>,
         updatedAt: String,
     ): BusinessCardUpdateResult?
+
+    /** Restores the exact pre-update snapshot after a required post-write refresh fails. */
+    suspend fun restore(snapshot: BusinessCardRecord): Boolean = false
 }
 
 data class StoredCardEmbedding(

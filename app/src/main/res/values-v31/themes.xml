@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ system splash. The adaptive launcher icon and startup mark stay identical. -->
+    <style name="Theme.HJP.Starting" parent="Theme.HJP">
+        <item name="android:windowSplashScreenBackground">@color/brand_splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/brand_splash_background</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>

@@ -18,6 +18,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -272,7 +274,23 @@ class UpdateBusinessCardPlugin(
             ?: return TypedToolResult.Failure(ToolError(
                 ToolErrorCode("contact.not_found"), "해당 명함을 찾을 수 없습니다.", false,
             ))
-        onUpdated(result)
+        try {
+            onUpdated(result)
+        } catch (refreshError: Throwable) {
+            val restored = try {
+                withContext(NonCancellable) { repository.restore(result.before) }
+            } catch (restoreError: Throwable) {
+                refreshError.addSuppressed(restoreError)
+                false
+            }
+            if (!restored) {
+                throw IllegalStateException(
+                    "Card update failed after persistence and the previous snapshot could not be restored",
+                    refreshError,
+                )
+            }
+            throw refreshError
+        }
         return TypedToolResult.Success(
             UpdateBusinessCardOutput(result.before, result.after),
             userMessageKo = "명함을 수정했어요.",

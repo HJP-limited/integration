@@ -4,6 +4,7 @@ import com.hjp.agent.contract.AgentEvent
 import com.hjp.agent.contract.AgentModelGateway
 import com.hjp.agent.contract.AgentModelSession
 import com.hjp.agent.contract.ConversationMemory
+import com.hjp.agent.contract.DirectoryNameMatch
 import com.hjp.agent.contract.TrackedActionStatus
 import com.hjp.agent.contract.FinalAnswerInput
 import com.hjp.agent.contract.ModelDecision
@@ -39,6 +40,83 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentKernelTest {
+    @Test
+    fun `named compose enforces router search after model drifts to calendar prose`() = runBlocking {
+        var searches = 0
+        var continuations = 0
+        val search = object : ToolPlugin {
+            override val implementationId = ToolImplementationId("test.search.compose")
+            override val contract = TEST_CONTRACT.copy(
+                capabilityId = ToolCapabilityId("contact.search"),
+                modelName = "search_contacts",
+                inputSchema = buildJsonObject {
+                    put("type", "object")
+                    put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("query"))))
+                    put("properties", buildJsonObject {
+                        put("query", buildJsonObject { put("type", "string") })
+                    })
+                },
+            )
+            override suspend fun availability() = ToolAvailability.Ready
+            override suspend fun execute(
+                request: ToolRequest,
+                context: ToolExecutionContext,
+            ): ToolExecutionResult {
+                searches += 1
+                assertEquals("현은영", (request.arguments["query"] as JsonPrimitive).content)
+                return ToolExecutionResult.Success(
+                    request.callId,
+                    request.capabilityId,
+                    request.contractVersion,
+                    1,
+                    buildJsonObject {
+                        put("results", kotlinx.serialization.json.JsonArray(emptyList()))
+                    },
+                )
+            }
+        }
+        val gateway = object : AgentModelGateway {
+            override suspend fun openSession(config: ModelSessionConfig) = object : AgentModelSession {
+                override val catalogRevision = config.toolCatalog.revision
+                override suspend fun decide(input: ModelInput) = ModelDecision.FinalCandidate(
+                    "일정을 예약하려면 제목과 시작 시간이 필요합니다.",
+                )
+                override suspend fun continueWithToolResult(result: ModelToolResponse): ModelDecision {
+                    continuations += 1
+                    assertEquals("search_contacts", result.modelToolName)
+                    return ModelDecision.FinalCandidate("현은영 연락처를 찾지 못했습니다.")
+                }
+                override fun streamFinal(input: FinalAnswerInput) = flowOf(input.draftText)
+                override fun close() = Unit
+            }
+        }
+        val registry = DefaultToolRegistry(listOf(ToolImplementationCandidate(search)))
+        val sessions = AgentSessionManager(InMemoryAgentSessionStore(), gateway, "system", "ko-KR")
+        val directory = ContactDirectory { candidates ->
+            candidates.firstOrNull { it.span == "현은영" }?.let {
+                listOf(DirectoryNameMatch(it.span, "현은영", listOf("C100"), true, false))
+            }.orEmpty()
+        }
+        val kernel = AgentKernel(
+            registry,
+            DefaultToolExecutor(registry),
+            DefaultToolPolicyEngine(),
+            sessions,
+            DefaultToolObservationMapper(),
+            FakeEnvironment(),
+            contactDirectory = directory,
+        )
+
+        val events = kernel.runTurn("현은영님께 지난 미팅 건으로 감사 인사 메일 작성해줘").toList()
+
+        assertEquals(1, searches)
+        assertEquals(1, continuations)
+        assertTrue((events.last() as AgentEvent.FinalMessage).text.contains("찾지 못했습니다"))
+        assertEquals("ACTION_COMPOSE", kernel.diagnostics.last?.dialogueAct)
+        assertEquals(listOf("search_contacts"), kernel.diagnostics.last?.executedTools)
+        sessions.close()
+    }
+
     @Test
     fun `ambiguous prior search does not block a standalone calendar`() = runBlocking {
         var opened = 0

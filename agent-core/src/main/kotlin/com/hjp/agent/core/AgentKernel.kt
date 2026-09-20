@@ -329,7 +329,12 @@ class AgentKernel(
             val fingerprints = mutableSetOf<String>()
             var callCount = 0
             var protocolCorrections = 0
-            val workflow = workflowPolicy.startTurn(modelText, environment.timeZoneId)
+            // The router has already decided which action owns this turn. Carry that typed decision
+            // into workflow validation so a noun inside message content (for example "지난 미팅" in
+            // a thank-you email) cannot authorize an unrelated calendar tool.
+            val workflow = workflowPolicy.startTurn(modelText, environment.timeZoneId).also {
+                it.seedRoutedDialogueAct(dialogueAct)
+            }
             if (dialogueAct in setOf(
                     com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH,
                     com.hjp.agent.contract.DialogueAct.CONTACT_DETAIL,
@@ -564,8 +569,14 @@ class AgentKernel(
                         // A typed search request must reach the store even when Gemma replies
                         // from stale history. This is a read-only obligation, not keyword fallback.
                         val requiredSearch = (route as? TurnRoutePlan.Continue)
-                            ?.takeIf { it.searchRequired && dialogueAct == com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH }
-                        if (requiredSearch != null && callCount == 0 &&
+                            ?.takeIf {
+                                it.searchRequired && (
+                                    dialogueAct == com.hjp.agent.contract.DialogueAct.CONTACT_SEARCH ||
+                                        workflow.contactReferenceRequested()
+                                    )
+                            }
+                        if (requiredSearch != null &&
+                            AgentWorkflowSession.SEARCH_CONTACTS !in executedTools &&
                             !Regex("몇|얼마나|개수|장수|전체|전부|모두").containsMatchIn(normalized)) {
                             decision = ModelDecision.ToolCalls(listOf(ModelToolCall(
                                 UUID.randomUUID().toString(), "search_contacts",
@@ -607,6 +618,14 @@ class AgentKernel(
                         // side-effect guard and confirmation policy; it merely cannot be stranded
                         // by prose or a malformed re-generated calendar call.
                         workflow.deterministicCalendarTerminalCall()?.let { terminalCall ->
+                            decision = ModelDecision.ToolCalls(listOf(terminalCall))
+                            continue
+                        }
+                        // The fresh-read contract now owns both the verified recipient and the
+                        // purpose-aware fallback draft. Execute that typed call directly so a
+                        // repair generation cannot replace the user's stated reason with generic
+                        // business prose.
+                        workflow.deterministicComposeTerminalCall()?.let { terminalCall ->
                             decision = ModelDecision.ToolCalls(listOf(terminalCall))
                             continue
                         }

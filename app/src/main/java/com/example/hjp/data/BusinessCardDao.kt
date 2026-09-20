@@ -46,6 +46,9 @@ interface BusinessCardDao {
     @Query("DELETE FROM business_cards WHERE id = :cardId")
     suspend fun deleteCard(cardId: String)
 
+    @Query("DELETE FROM card_embeddings WHERE card_id = :cardId")
+    suspend fun deleteEmbeddingsForCard(cardId: String)
+
     @Query("SELECT count(*) FROM business_cards_fts")
     suspend fun countFts(): Int
 
@@ -69,6 +72,7 @@ interface BusinessCardDao {
 
     @Transaction
     suspend fun deleteAndReindex(cardId: String) {
+        deleteEmbeddingsForCard(cardId)
         deleteCard(cardId)
         rebuildFts()
     }
@@ -81,6 +85,12 @@ interface BusinessCardDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertEmbeddings(embeddings: List<CardEmbeddingEntity>)
+
+    /** The refreshed vector set is published as one Room transaction. */
+    @Transaction
+    suspend fun upsertEmbeddingsAtomically(embeddings: List<CardEmbeddingEntity>) {
+        upsertEmbeddings(embeddings)
+    }
 }
 
 private fun BusinessCardEntity.toFtsEntity(rowId: Int): BusinessCardFtsEntity =

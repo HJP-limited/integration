@@ -3,6 +3,7 @@ package com.hjp.agent.core
 import com.hjp.agent.contract.ModelWorkflowNote
 import com.hjp.agent.contract.ModelToolCall
 import com.hjp.agent.contract.ModelToolResponse
+import com.hjp.agent.contract.DialogueAct
 import com.hjp.tool.contract.ToolContract
 import com.hjp.tool.contract.ToolExecutionResult
 import java.time.DayOfWeek
@@ -151,8 +152,35 @@ class AgentWorkflowSession internal constructor(
      */
     private val maskedUserText = PersonNameMask.maskNames(userText)
 
-    private val calendarIntent = CALENDAR_MARKERS.any(maskedUserText::contains)
-    private val composeIntent = COMPOSE_MARKERS.any(maskedUserText::contains)
+    /**
+     * The deterministic router owns the turn's action whenever it reached an action act.
+     *
+     * A lexical rescan used to make both flags true for a compose request such as
+     * "지난 미팅 감사 메일 작성해줘": 미팅 looked like a calendar command even though it was the
+     * subject of the mail.  The ReAct model could then answer as a calendar assistant and the
+     * workflow would accept that drift.  Non-action acts retain the lexical fallback because the
+     * policy is also used directly by tests and by callers that have no router classification.
+     */
+    private var calendarIntent = CALENDAR_MARKERS.any(maskedUserText::contains)
+    private var composeIntent = COMPOSE_MARKERS.any(maskedUserText::contains)
+
+    fun seedRoutedDialogueAct(dialogueAct: DialogueAct) {
+        when (dialogueAct) {
+            DialogueAct.ACTION_CALENDAR -> {
+                calendarIntent = true
+                composeIntent = false
+            }
+            DialogueAct.ACTION_COMPOSE -> {
+                calendarIntent = false
+                composeIntent = true
+            }
+            DialogueAct.ACTION_UPDATE -> {
+                calendarIntent = false
+                composeIntent = false
+            }
+            else -> Unit
+        }
+    }
     /**
      * A card edit is identified by the verb plus what it acts on. Requiring the literal word 명함
      * missed every turn where the reference had already been resolved — "김지원 메모를 VIP로 수정해줘"
@@ -422,6 +450,23 @@ class AgentWorkflowSession internal constructor(
                 "입력한 이메일 주소 형식이 올바르지 않습니다. 정확한 주소를 확인해 주세요.",
             )
         }
+        // Reject a terminal action that belongs to another routed intent before prerequisite
+        // handling. Otherwise a drifted calendar call on an email turn is mistaken for a calendar
+        // that merely needs a contact read, which reinforces the model's wrong interpretation.
+        when (call.modelToolName) {
+            CREATE_CALENDAR_EVENT -> if (!calendarIntent) {
+                return reject(WorkflowRejectReason.TOOL_NOT_REQUESTED, "일정 생성 요청이 아닙니다.")
+            }
+            OPEN_COMPOSE -> if (!composeIntent) {
+                return reject(
+                    WorkflowRejectReason.TOOL_NOT_REQUESTED,
+                    "작성 화면 실행 의도가 명확하지 않아 도구를 실행하지 않습니다.",
+                )
+            }
+            UPDATE_BUSINESS_CARD -> if (!updateIntent) {
+                return reject(WorkflowRejectReason.TOOL_NOT_REQUESTED, "명함 수정 요청이 아닙니다.")
+            }
+        }
         if (calendarIntent && !calendarStartProvided &&
             call.modelToolName in setOf(GET_CURRENT_DATETIME, CREATE_CALENDAR_EVENT)
         ) {
@@ -579,6 +624,21 @@ class AgentWorkflowSession internal constructor(
         return ModelToolCall(
             callId = "policy-calendar-terminal",
             modelToolName = CREATE_CALENDAR_EVENT,
+            arguments = arguments,
+        )
+    }
+
+    /**
+     * Completes a name-bound email after its fresh read without asking the model to rewrite a
+     * purpose-aware draft. A previously proposed valid draft wins through
+     * [pendingTerminalArguments]; otherwise that method supplies the user-purpose fallback above.
+     */
+    fun deterministicComposeTerminalCall(): ModelToolCall? {
+        if (pendingTerminalTool() != OPEN_COMPOSE || selectedContactPurpose != "email") return null
+        val arguments = pendingTerminalArguments() ?: return null
+        return ModelToolCall(
+            callId = "policy-compose-terminal",
+            modelToolName = OPEN_COMPOSE,
             arguments = arguments,
         )
     }
@@ -935,16 +995,80 @@ class AgentWorkflowSession internal constructor(
         ?.let(::normalizeVerifiedCalendarAttendee)
         ?.arguments ?: defaultComposeDraftArguments() ?: defaultCalendarArguments()
 
-    /** Neutral draft: it introduces no facts, dates, prices, or commitments the user did not give. */
+    /**
+     * A safe draft for the bounded terminal repair.
+     *
+     * The previous fallback always replaced the user's reason with "업무 관련하여 연락드립니다".
+     * That kept invented facts out, but it also discarded an explicit purpose such as "지난 미팅
+     * 감사 인사".  A purpose copied from this turn's own text is just as grounded as the fixed
+     * draft, so use it first; retain the neutral wording only when no subject matter remains after
+     * names, addresses, channel words and execution verbs are removed.
+     */
     private fun defaultComposeDraftArguments(): JsonObject? {
         if (!composeIntent || selectedContactPurpose != "email") return null
         val email = selectedContact?.string("email")?.takeIf(::isValidEmail) ?: return null
+        val purposeDraft = explicitComposePurpose()?.let(::draftForPurpose)
         return buildJsonObject {
             put("channel", "email")
             put("to", email)
-            put("subject", "업무 관련 연락드립니다")
-            put("body", "안녕하세요.\n\n업무 관련하여 연락드립니다. 확인 부탁드립니다.\n\n감사합니다.")
+            put("subject", purposeDraft?.subject ?: "업무 관련 연락드립니다")
+            put(
+                "body",
+                purposeDraft?.body
+                    ?: "안녕하세요.\n\n업무 관련하여 연락드립니다. 확인 부탁드립니다.\n\n감사합니다.",
+            )
         }
+    }
+
+    private data class ComposeDraft(val subject: String, val body: String)
+
+    /** Extracts only user-authored subject matter; recipient and execution syntax are discarded. */
+    private fun explicitComposePurpose(): String? {
+        val purpose = maskedUserText
+            .replace(Regex("·+"), " ")
+            .replace(EMAIL_REGEX, " ")
+            .replace(PHONE_REGEX, " ")
+            .replace(COMPOSE_PURPOSE_BOILERPLATE, " ")
+            .replace(COMPOSE_RECIPIENT_REMAINDER, " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trim(',', '.', '。', '!', '?', ' ')
+            .take(80)
+            .trim()
+        return purpose.takeIf { value ->
+            value.isNotBlank() && value !in PURPOSELESS_COMPOSE_MODIFIERS
+        }
+    }
+
+    /** Produces restrained Korean copy using only the extracted purpose and no new factual claim. */
+    private fun draftForPurpose(purpose: String): ComposeDraft {
+        val gratitude = GRATITUDE_PURPOSE.find(purpose)
+        if (gratitude != null) {
+            val context = purpose.substring(0, gratitude.range.first)
+                .replace(GRATITUDE_CONTEXT_SUFFIX, "")
+                .trim()
+            val subject = if (context.isBlank()) "감사 인사" else "$context 감사 인사"
+            val sentence = if (context.isBlank()) {
+                "감사의 말씀을 드립니다."
+            } else {
+                "$context 관련해 감사의 말씀을 드립니다."
+            }
+            return ComposeDraft(subject.take(60), "안녕하세요.\n\n$sentence\n\n감사합니다.")
+        }
+
+        val sentence = when {
+            purpose.endsWith("문의") -> "${purpose}드립니다."
+            purpose.endsWith("요청") -> "${purpose}드립니다."
+            purpose.endsWith("안내") -> "${purpose}드립니다."
+            purpose.endsWith("공유") -> "${purpose}드립니다."
+            purpose.contains("사과") -> "사과의 말씀을 드립니다."
+            purpose.contains("안부") -> "안부 인사를 드립니다."
+            else -> "$purpose 관련하여 연락드립니다."
+        }
+        return ComposeDraft(
+            subject = purpose.take(60),
+            body = "안녕하세요.\n\n$sentence\n\n감사합니다.",
+        )
     }
 
     /** Calendar arguments are derived only from the fresh calendar read and tool-verified time. */
@@ -1508,6 +1632,22 @@ class AgentWorkflowSession internal constructor(
                 "초안 열어", "초안 열어줘", "초안 열어 줘",
                 "초안까지 열어", "초안까지 열어줘", "초안까지 열어 줘",
             )
+        private val COMPOSE_PURPOSE_BOILERPLATE = Regex(
+            "(?:이메일|메일|문자|메시지|sms|초안|본문|내용|" +
+                "작성해\\s*줘|작성해\\s*주세요|작성|써\\s*줘|써|보내\\s*줘|보내|" +
+                "전송해\\s*줘|전송|열어\\s*줘|열어|해\\s*줘|해주세요|좀|하나)",
+            RegexOption.IGNORE_CASE,
+        )
+        private val COMPOSE_RECIPIENT_REMAINDER = Regex(
+            "(?:그\\s*사람|그분|이분|저분|상대방)|" +
+                "(?:님|씨)?(?:에게|한테|께)|(?<![가-힣])(?:으로|로)(?![가-힣])",
+        )
+        private val PURPOSELESS_COMPOSE_MODIFIERS = setOf(
+            "간단한", "짧은", "정중한", "자연스러운", "간단하게", "짧게", "정중하게",
+        )
+        private val GRATITUDE_PURPOSE = Regex("감사|고맙")
+        private val GRATITUDE_CONTEXT_SUFFIX =
+            Regex("\\s*(?:에\\s*대한|건으로|관련(?:하여|해서|해)?|관한)\\s*$")
         /**
          * Claims the agent is not entitled to make, keyed by what the tool actually did.
          *

@@ -3,6 +3,22 @@ package com.example.hjp
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+internal sealed interface AiPreparationState {
+    data object Idle : AiPreparationState
+    data object Preparing : AiPreparationState
+    data object Ready : AiPreparationState
+    data class Failed(val message: String) : AiPreparationState
+}
 
 /**
  * Owns the single temporary agent session for the life of the process.
@@ -26,16 +42,41 @@ import android.os.Bundle
  */
 class HjpApplication : Application() {
     val modelSetup by lazy { com.example.hjp.models.ServiceModelSetup(this) }
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mutableAiPreparationState = MutableStateFlow<AiPreparationState>(AiPreparationState.Idle)
+    internal val aiPreparationState = mutableAiPreparationState.asStateFlow()
+    private var preparationJob: Job? = null
     private var liveActivities = 0
     private var sessionTouched = false
 
-    val container: AppContainer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+    private val containerHolder = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AppContainer(this).also { it.onSessionUsed = ::markSessionUsed }
     }
+    val container: AppContainer get() = containerHolder.value
 
     override fun onCreate() {
         super.onCreate()
         registerActivityLifecycleCallbacks(SessionLifecycleObserver())
+    }
+
+    /** Starts one process-owned warm-up. It survives activity recreation and backgrounding. */
+    @Synchronized
+    internal fun prepareAi() {
+        if (mutableAiPreparationState.value == AiPreparationState.Ready) return
+        if (preparationJob?.isActive == true) return
+        mutableAiPreparationState.value = AiPreparationState.Preparing
+        preparationJob = applicationScope.launch {
+            try {
+                container.prepareForUse()
+                mutableAiPreparationState.value = AiPreparationState.Ready
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableAiPreparationState.value = AiPreparationState.Failed(
+                    error.message ?: "AI 엔진을 시작하지 못했습니다.",
+                )
+            }
+        }
     }
 
     /** Marks that the session now holds conversation state worth discarding. */
@@ -44,7 +85,8 @@ class HjpApplication : Application() {
     }
 
     override fun onTerminate() {
-        container.close()
+        applicationScope.cancel()
+        if (containerHolder.isInitialized()) containerHolder.value.close()
         super.onTerminate()
     }
 

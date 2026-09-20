@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -59,6 +61,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,6 +87,10 @@ import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The manifest theme is a window-only launch screen. Switch before Activity creation so
+        // the real UI never inherits splash styling; Android keeps the launch window until the
+        // first frame, without an artificial timer.
+        setTheme(R.style.Theme_HJP)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         intent?.takeIf { BuildConfig.DEBUG }?.getStringExtra("q")?.let { q ->
@@ -839,22 +846,176 @@ private suspend fun copyModelToAppStorage(context: Context, uri: Uri, fileName: 
 private fun ServiceEntry(application: HjpApplication) {
     val setup = application.modelSetup
     val state by setup.state.collectAsState()
-    var container by remember { mutableStateOf<AppContainer?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val preparation by application.aiPreparationState.collectAsState()
+    val readyNotice = remember(application) { AiReadyNoticePreference(application) }
+    var readyNoticeDismissed by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(state.ready, setup.termsAccepted) {
         if (state.ready && setup.termsAccepted) {
-            try { container = withContext(Dispatchers.IO) { application.container } }
-            catch (e: Exception) { error = "AI 초기화에 실패했습니다. 앱을 다시 열어 주세요." }
+            application.prepareAi()
         }
     }
-    val active = container
-    if (active != null) {
-        val directory = remember(active) { CardDirectory(active.contactRepository, active.directorySearchBackend, active::refreshAfterCardAdded) }
-        HjpApp(active, directory)
-    } else Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp)) {
-            com.example.hjp.ui.ModelDownloadPanel()
-            if (state.ready && setup.termsAccepted) Text(error ?: "AI 엔진을 시작하고 있습니다…")
+
+    when {
+        state.ready && setup.termsAccepted && preparation == AiPreparationState.Ready -> {
+            val active = application.container
+            if (readyNotice.shouldShow() && !readyNoticeDismissed) {
+                AiReadyScreen(
+                    onDoNotShowAgain = {
+                        readyNotice.doNotShowAgain()
+                        readyNoticeDismissed = true
+                    },
+                    onConfirm = { readyNoticeDismissed = true },
+                )
+            } else {
+                val directory = remember(active) {
+                    CardDirectory(
+                        active.contactRepository,
+                        active.directorySearchBackend,
+                        active::refreshAfterCardAdded,
+                    )
+                }
+                HjpApp(active, directory)
+            }
+        }
+
+        state.ready && setup.termsAccepted && preparation is AiPreparationState.Failed -> {
+            AiPreparationFailedScreen(
+                message = (preparation as AiPreparationState.Failed).message,
+                onRetry = application::prepareAi,
+            )
+        }
+
+        state.phase in setOf("checking", "verifying") ||
+            (state.ready && setup.termsAccepted) -> AiPreparingScreen()
+
+        else -> Surface(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+            ) {
+                com.example.hjp.ui.ModelDownloadPanel()
+            }
+        }
+    }
+}
+
+@Composable
+internal fun AiPreparingScreen() {
+    Surface(Modifier.fillMaxSize(), color = Color.White) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Image(
+                painter = painterResource(R.drawable.hjp_brand_splash),
+                contentDescription = "HJP 로고",
+                modifier = Modifier.size(240.dp),
+                contentScale = ContentScale.Fit,
+            )
+            CircularProgressIndicator(Modifier.padding(top = 28.dp))
+            Text(
+                "AI 기능을 준비하고 있습니다",
+                modifier = Modifier.padding(top = 18.dp),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "대화 모델과 검색 모델을 기기에서 시작하고 있습니다.",
+                modifier = Modifier.padding(top = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun AiReadyScreen(
+    onDoNotShowAgain: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    Surface(Modifier.fillMaxSize(), color = Color.White) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.weight(1f))
+            Image(
+                painter = painterResource(R.drawable.hjp_brand_splash),
+                contentDescription = "HJP 로고",
+                modifier = Modifier.size(184.dp),
+                contentScale = ContentScale.Fit,
+            )
+            Text(
+                "AI 준비 완료",
+                modifier = Modifier.padding(top = 24.dp),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "이제 명함 검색과 Agent 기능을 사용할 수 있습니다.",
+                modifier = Modifier.padding(top = 10.dp),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.weight(1f))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onDoNotShowAgain) {
+                    Text("다시 보지 않기")
+                }
+                Button(onClick = onConfirm) {
+                    Text("확인")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiPreparationFailedScreen(
+    message: String,
+    onRetry: () -> Unit,
+) {
+    Surface(Modifier.fillMaxSize(), color = Color.White) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                "AI 준비에 실패했습니다",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                message,
+                modifier = Modifier.padding(top = 12.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(
+                onClick = onRetry,
+                modifier = Modifier.padding(top = 24.dp),
+            ) {
+                Text("다시 시도")
+            }
         }
     }
 }

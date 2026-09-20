@@ -63,6 +63,12 @@ class RoomBusinessCardRepository(
         return BusinessCardUpdateResult(before, after)
     }
 
+    override suspend fun restore(snapshot: BusinessCardRecord): Boolean {
+        if (dao.getById(snapshot.id) == null) return false
+        dao.updateAndReindex(snapshot.toBusinessCardEntity(json))
+        return dao.getById(snapshot.id)?.toBusinessCardRecord(json) == snapshot
+    }
+
     /**
      * 촬영으로 새로 만든 명함을 넣는다. Agent_0910 에는 OCR 트랙이 없어 이 경로가 없었다.
      *
@@ -72,6 +78,13 @@ class RoomBusinessCardRepository(
     suspend fun insert(record: BusinessCardRecord) {
         seedIfEmpty()
         dao.insertAllAndReindex(listOf(record.toBusinessCardEntity(json)))
+    }
+
+    /** Rollback path for an OCR insert whose required embedding refresh failed. */
+    suspend fun delete(cardId: String): Boolean {
+        if (dao.getById(cardId) == null) return true
+        dao.deleteAndReindex(cardId)
+        return dao.getById(cardId) == null
     }
 
     /** 화면이 쓰는 전체 개수. 시딩 전이면 0 이 아니라 시딩 후의 수를 돌려준다. */
@@ -133,7 +146,7 @@ class RoomBusinessCardRepository(
                     .onFailure { Log.w("HjpBundledEmbeddings", "Bundle rejected; using live vectors", it) }
                     .getOrDefault(emptyList())
                 if (bundled.isNotEmpty()) {
-                    dao.upsertEmbeddings(bundled.map { it.toEmbeddingEntity() })
+                    dao.upsertEmbeddingsAtomically(bundled.map { it.toEmbeddingEntity() })
                 }
             }
         }
@@ -142,7 +155,7 @@ class RoomBusinessCardRepository(
 
     override suspend fun upsertEmbeddings(embeddings: List<StoredCardEmbedding>) {
         if (embeddings.isNotEmpty()) {
-            dao.upsertEmbeddings(embeddings.map(StoredCardEmbedding::toEmbeddingEntity))
+            dao.upsertEmbeddingsAtomically(embeddings.map(StoredCardEmbedding::toEmbeddingEntity))
         }
     }
 
@@ -164,7 +177,7 @@ class RoomBusinessCardRepository(
                 val bundled = bundledEmbeddings.load(modelName, cards.mapTo(hashSetOf()) { it.id })
                     .filterNot { it.cardId in existing }
                 if (bundled.isNotEmpty()) {
-                    dao.upsertEmbeddings(bundled.map { it.toEmbeddingEntity() })
+                    dao.upsertEmbeddingsAtomically(bundled.map { it.toEmbeddingEntity() })
                 }
             }
         }

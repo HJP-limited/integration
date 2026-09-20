@@ -41,6 +41,7 @@ import com.hjp.tool.contact.RyeongContactSearchBackend
 import com.hjp.tool.contact.CountContactsPlugin
 import com.hjp.tool.contact.SearchContactsPlugin
 import com.hjp.tool.contract.ConfirmationGateway
+import com.hjp.tool.contract.CatalogContext
 import com.hjp.tool.contract.PermissionGateway
 import com.hjp.tool.contract.ToolEventSink
 import com.hjp.tool.contract.ToolExecutionContext
@@ -50,6 +51,8 @@ import java.io.File
 import java.util.Locale
 import java.util.TimeZone
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AppContainer(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -81,6 +84,7 @@ class AppContainer(context: Context) : AutoCloseable {
     val runtimeCounters = com.hjp.agent.contract.AgentRuntimeCounters()
 
     private val confirmationCoordinator = AgentConfirmationCoordinator()
+    private val runtimeEnvironment = AndroidAgentRuntimeEnvironment(confirmationCoordinator)
     private val database = HjpDatabase.getInstance(appContext)
     // 화면(명함 목록·홈·OCR 저장)도 같은 저장소를 쓴다. 도구가 보는 데이터와 화면이 보는
     // 데이터가 갈라지면, 방금 저장한 명함이 목록에는 있는데 에이전트는 못 찾는 일이 생긴다.
@@ -205,7 +209,9 @@ class AppContainer(context: Context) : AutoCloseable {
             LiteRtAgentModelGateway(
                 modelFile,
                 File(appContext.cacheDir, "litertlm"),
-                LiteRtBackendPreference.CPU_ONLY,
+                // Prefer the device accelerator, but retain the production-safe CPU fallback for
+                // devices whose GPU/OpenCL stack cannot initialize this artifact.
+                LiteRtBackendPreference.GPU_THEN_CPU,
                 counters = runtimeCounters,
             )
         },
@@ -215,6 +221,8 @@ class AppContainer(context: Context) : AutoCloseable {
         sessionStore, modelGateway, SYSTEM_INSTRUCTION,
         Locale.getDefault().toLanguageTag(),
     )
+    private val preparationMutex = Mutex()
+    @Volatile private var preparedForUse = false
 
     private val reactKernel = AgentKernel(
         registry = registry,
@@ -222,7 +230,7 @@ class AppContainer(context: Context) : AutoCloseable {
         policyEngine = DefaultToolPolicyEngine(),
         sessionManager = sessionManager,
         observationMapper = DefaultToolObservationMapper(),
-        environment = AndroidAgentRuntimeEnvironment(confirmationCoordinator),
+        environment = runtimeEnvironment,
         turnPolicy = AgentTurnPolicy(
             maxToolCalls = 6,
             maxProtocolCorrections = 1,
@@ -250,7 +258,7 @@ class AppContainer(context: Context) : AutoCloseable {
             modelGateway = LiteRtStructuredAgentModelGateway(
                 modelFile,
                 File(appContext.cacheDir, "litertlm-structured"),
-                LiteRtBackendPreference.CPU_ONLY,
+                LiteRtBackendPreference.GPU_THEN_CPU,
             ),
             contextSelector = contextSelector,
             contactDirectory = contactDirectory,
@@ -281,6 +289,37 @@ class AppContainer(context: Context) : AutoCloseable {
     }
 
     val modelReady: Boolean get() = emulatorCompatibilityMode || deployment.usable
+
+    /**
+     * Loads everything needed by the first real Agent turn while the branded startup screen is up.
+     *
+     * Opening the native session is intentional: constructing [AppContainer] only validates the
+     * artifact and wires dependencies; LiteRT-LM otherwise initializes on the user's first prompt.
+     * The embedding probe likewise performs real inference, so "AI 준비 완료" never means merely
+     * "the files exist". The mutex makes retries safe and prevents activity recreation from opening
+     * duplicate engines or conversations.
+     */
+    suspend fun prepareForUse() = preparationMutex.withLock {
+        if (preparedForUse) return@withLock
+        check(modelReady) { "검증된 대화 모델을 사용할 수 없습니다." }
+
+        val session = sessionManager.getOrCreate()
+        val snapshot = registry.snapshot(CatalogContext(
+            sessionId = session.sessionId,
+            localeTag = runtimeEnvironment.localeTag,
+            grantedPermissions = runtimeEnvironment.grantedPermissions(),
+            deviceCapabilities = runtimeEnvironment.deviceCapabilities(),
+        ))
+        when (val result = preflight(snapshot)) {
+            is ContextPreflightResult.Ok -> Unit
+            is ContextPreflightResult.Failure -> error(result.reasonKo)
+        }
+        sessionManager.requireModelSession(snapshot)
+        if (!emulatorCompatibilityMode) checkEmbeddingModel()
+        preparedForUse = true
+    }
+
+    val isPreparedForUse: Boolean get() = preparedForUse
 
     /** Runs real embedding inference off the UI thread; never substitutes a keyword engine. */
     suspend fun checkEmbeddingModel(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

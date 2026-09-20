@@ -6,6 +6,8 @@ import com.hjp.agent.contract.ContactMention
 import com.hjp.agent.contract.ContactReference
 import com.hjp.agent.contract.ContactSelectionBasis
 import com.hjp.agent.contract.ConversationMemory
+import com.hjp.agent.contract.DialogueAct
+import com.hjp.agent.contract.DirectoryNameMatch
 import com.hjp.agent.contract.MemoryProvenance
 import com.hjp.agent.contract.ModelConversationRole
 import com.hjp.agent.contract.TrackedAction
@@ -18,6 +20,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DeterministicTurnRouterTest {
+    @Test
+    fun `past meeting context belongs to explicit email compose`() {
+        val text = "현은영님께 지난 미팅 건으로 감사 인사 메일 작성해줘"
+        val context = TurnContext(
+            userText = text,
+            availableTools = setOf(
+                "search_contacts", "get_contact", "open_compose", "create_calendar_event",
+            ),
+            directoryMatches = listOf(
+                DirectoryNameMatch("현은영", "현은영", listOf("C100"), true, false),
+            ),
+        )
+
+        assertEquals(DialogueAct.ACTION_COMPOSE, DeterministicTurnRouter.act(context))
+        val route = DeterministicTurnRouter.route(context) as TurnRoutePlan.Continue
+        assertTrue(route.searchRequired)
+        assertEquals("현은영", route.searchQuery)
+        assertTrue(route.namedTargetAcquisition)
+    }
+
     @Test
     fun `reference to a verified contact grounds on the card id and requires a fresh read`() {
         val plan = DeterministicTurnRouter.route(

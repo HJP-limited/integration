@@ -1,5 +1,6 @@
 package com.hjp.agent.core
 
+import com.hjp.agent.contract.DialogueAct
 import com.hjp.agent.contract.ModelToolCall
 import com.hjp.tool.contract.ConfirmationPolicy
 import com.hjp.tool.contract.ContractVersion
@@ -20,6 +21,87 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentWorkflowPolicyTest {
+    @Test
+    fun `router-owned compose treats past meeting as content not calendar authority`() {
+        val workflow = ProductionAgentWorkflowPolicy().startTurn(
+            "현은영님께 지난 미팅 건으로 감사 인사 메일 작성해줘",
+            "Asia/Seoul",
+        ).also { it.seedRoutedDialogueAct(DialogueAct.ACTION_COMPOSE) }
+
+        assertEquals(AgentWorkflowSession.OPEN_COMPOSE, workflow.pendingTerminalTool())
+        assertRejected(
+            workflow.validate(
+                call(
+                    "create_calendar_event",
+                    "title" to "지난 미팅",
+                    "start_time" to "2026-09-21T15:00",
+                ),
+                CALENDAR,
+            ),
+            WorkflowRejectReason.TOOL_NOT_REQUESTED,
+        )
+        val finalOnlyWorkflow = ProductionAgentWorkflowPolicy().startTurn(
+            "현은영님께 지난 미팅 건으로 감사 인사 메일 작성해줘",
+            "Asia/Seoul",
+        ).also { it.seedRoutedDialogueAct(DialogueAct.ACTION_COMPOSE) }
+        assertTrue(
+            finalOnlyWorkflow.validateFinal("일정을 예약하려면 제목과 시작 시간이 필요합니다.")
+                is WorkflowFinalValidationResult.Replace,
+        )
+    }
+
+    @Test
+    fun `compose fallback preserves explicit past meeting gratitude purpose`() {
+        val workflow = turn("현은영님께 지난 미팅 건으로 감사 인사 메일 작성해줘")
+            .also { it.seedRoutedDialogueAct(DialogueAct.ACTION_COMPOSE) }
+        groundEmailRecipient(workflow)
+
+        val note = workflow.continuationPrompt("open_compose", "get-call", "get_contact").text
+        val terminal = checkNotNull(workflow.deterministicComposeTerminalCall())
+
+        assertTrue(note.contains("\"subject\":\"지난 미팅 감사 인사\""))
+        assertTrue(note.contains("지난 미팅 관련해 감사의 말씀을 드립니다."))
+        assertTrue(!note.contains("업무 관련하여 연락드립니다"))
+        assertEquals("open_compose", terminal.modelToolName)
+        assertEquals(
+            "지난 미팅 감사 인사",
+            (terminal.arguments["subject"] as JsonPrimitive).content,
+        )
+        assertTrue(
+            (terminal.arguments["body"] as JsonPrimitive).content
+                .contains("지난 미팅 관련해 감사의 말씀을 드립니다."),
+        )
+    }
+
+    @Test
+    fun `compose fallback preserves explicit inquiry purpose`() {
+        val workflow = turn("현은영님께 견적 문의 메일 작성해줘")
+            .also { it.seedRoutedDialogueAct(DialogueAct.ACTION_COMPOSE) }
+        groundEmailRecipient(workflow)
+
+        val note = workflow.continuationPrompt("open_compose", "get-call", "get_contact").text
+
+        assertTrue(note.contains("\"subject\":\"견적 문의\""))
+        assertTrue(note.contains("견적 문의드립니다."))
+    }
+
+    @Test
+    fun `compose fallback stays neutral only when purpose is absent`() {
+        val workflow = turn("현은영님께 메일 작성해줘")
+            .also { it.seedRoutedDialogueAct(DialogueAct.ACTION_COMPOSE) }
+        groundEmailRecipient(workflow)
+
+        val note = workflow.continuationPrompt("open_compose", "get-call", "get_contact").text
+        val terminal = checkNotNull(workflow.deterministicComposeTerminalCall())
+
+        assertTrue(note.contains("\"subject\":\"업무 관련 연락드립니다\""))
+        assertTrue(note.contains("업무 관련하여 연락드립니다."))
+        assertEquals(
+            "업무 관련 연락드립니다",
+            (terminal.arguments["subject"] as JsonPrimitive).content,
+        )
+    }
+
     @Test
     fun `standalone calendar and literal recipient do not inherit contact ambiguity`() {
         assertTrue(!turn("2026년 10월 1일 오후 3시 팀 미팅 일정 만들어줘").contactReferenceRequested())
@@ -747,6 +829,20 @@ class AgentWorkflowPolicyTest {
 
     private fun turn(text: String) =
         ProductionAgentWorkflowPolicy().startTurn(text, "Asia/Seoul")
+
+    private fun groundEmailRecipient(workflow: AgentWorkflowSession) {
+        val search = call("search_contacts", "query" to "현은영")
+        workflow.recordResult(search, success(search, buildJsonObject {
+            put("results", buildJsonArray {
+                add(buildJsonObject { put("card_id", "card-1") })
+            })
+        }))
+        val get = call("get_contact", "card_id" to "card-1", "purpose" to "email")
+        workflow.recordResult(get, success(get, buildJsonObject {
+            put("card_id", "card-1")
+            put("email", "verified@example.com")
+        }))
+    }
 
     private fun assertAllowed(result: WorkflowValidationResult) {
         assertTrue("expected allow, got $result", result is WorkflowValidationResult.Allow)
