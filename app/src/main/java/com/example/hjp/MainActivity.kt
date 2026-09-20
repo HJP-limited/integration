@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
@@ -92,7 +93,18 @@ class MainActivity : ComponentActivity() {
         // first frame, without an artificial timer.
         setTheme(R.style.Theme_HJP)
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // 브랜드 UI는 시스템 다크모드와 무관하게 밝게 표시한다. edge-to-edge의 자동
+        // 판정도 시스템 야간 모드를 따르므로 아이콘 색을 명시해야 밝은 배경에서 보인다.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            ),
+            navigationBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            ),
+        )
         intent?.takeIf { BuildConfig.DEBUG }?.getStringExtra("q")?.let { q ->
             android.util.Log.i(DIAG_TAG, "onCreate q=$q")
             DebugQuestion.offer(q)

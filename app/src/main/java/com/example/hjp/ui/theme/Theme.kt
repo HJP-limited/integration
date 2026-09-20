@@ -1,7 +1,6 @@
 package com.example.hjp.ui.theme
 
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -32,10 +31,10 @@ private val LightColorScheme = lightColorScheme(
     onPrimary = Color.White,
     primaryContainer = BlueSoft,
     onPrimaryContainer = BlueOnSoft,
-    secondary = VioletOnSoft,
+    secondary = BlueAccent,
     onSecondary = Color.White,
-    secondaryContainer = VioletSoft,
-    onSecondaryContainer = VioletOnSoft,
+    secondaryContainer = SkySoft,
+    onSecondaryContainer = SkyOnSoft,
     tertiary = EmeraldOnSoft,
     tertiaryContainer = EmeraldSoft,
     onTertiaryContainer = EmeraldOnSoft,
@@ -50,12 +49,19 @@ private val LightColorScheme = lightColorScheme(
     onSurface = Slate900,
     surfaceVariant = Slate50,
     onSurfaceVariant = Slate500,
+    outline = Slate400,
     outlineVariant = Slate200,
+    surfaceTint = BluePrimary,
+    inverseSurface = Slate900,
+    inverseOnSurface = Slate100,
+    inversePrimary = BlueOnDark,
 )
 
 @Composable
 fun HJPTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    // 앱 로고와 시작 화면이 밝은 브랜드 시스템으로 설계되어 기본값은 시스템
+    // 다크모드를 따르지 않는다. 명시적인 미리보기·테스트에서는 true 를 줄 수 있다.
+    darkTheme: Boolean = false,
     // 기기 배경화면 색을 따라가면 목업 팔레트가 묻히므로 끈다
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit

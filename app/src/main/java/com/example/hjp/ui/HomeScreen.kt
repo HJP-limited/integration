@@ -31,8 +31,8 @@ import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.CardDirectory
 import com.example.hjp.ui.theme.BluePrimary
 import com.example.hjp.ui.theme.BlueSoft
-import com.example.hjp.ui.theme.VioletOnSoft
-import com.example.hjp.ui.theme.VioletSoft
+import com.example.hjp.ui.theme.SkyOnSoft
+import com.example.hjp.ui.theme.SkySoft
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -134,8 +134,8 @@ fun HomeScreen(
                 icon = HjpIcons.AGENT,
                 title = "AI Agent",
                 subtitle = "자연어로 찾기",
-                container = VioletSoft,
-                content = VioletOnSoft,
+                container = SkySoft,
+                content = SkyOnSoft,
                 onClick = onAgent,
                 modifier = Modifier.weight(1f),
             )

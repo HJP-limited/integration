@@ -2,8 +2,11 @@
 <resources>
 
     <style name="Theme.HJP" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/brand_splash_background</item>
+        <item name="android:windowBackground">@color/brand_app_background</item>
+        <item name="android:statusBarColor">@color/brand_app_background</item>
+        <item name="android:navigationBarColor">@color/brand_app_background</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 
     <!--
