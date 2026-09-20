@@ -13,6 +13,7 @@ import com.hjp.searchlookup.SearchPlanSnapshot
 import com.hjp.searchlookup.SearchResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -187,15 +188,38 @@ class RyeongContactSearchBackend(
                     (System.nanoTime() - initializationStarted) / 1_000_000L
                 val embeddingModelBacked = embeddingEngine.isModelBacked
                 val embeddingFallbackReason = if (embeddingModelBacked) "" else embeddingEngine.diagnosticStatus()
+                val createdState = InitializedSearch(
+                    createdService,
+                    embeddingModelBacked,
+                    embeddingFallbackReason,
+                    initializationMillis,
+                )
                 if (embeddingModelBacked && embeddingStore != null) {
-                    embeddingStore.upsertEmbeddings(
-                        snapshot.allEmbeddings().map { it.toStoredEmbedding() },
-                    )
+                    val storedByCard = storedEmbeddings.associateBy { it.cardId }
+                    val refreshed = snapshot.allEmbeddings()
+                        .map { it.toStoredEmbedding() }
+                        .filter { candidate ->
+                            storedByCard[candidate.cardId]?.let { stored ->
+                                stored.modelName == candidate.modelName &&
+                                    stored.dimension == candidate.dimension &&
+                                    stored.sourceTextHash == candidate.sourceTextHash &&
+                                    stored.vectorBlob.size == candidate.vectorBlob.size
+                            } != true
+                        }
+                    // Document inference is synchronous and may finish just after the parent turn
+                    // times out. Persist the already-computed vectors and publish the snapshot in a
+                    // short non-cancellable boundary so the next search does not recompute them all.
+                    // Inference itself remains cancellable at the normal coroutine boundary.
+                    withContext(NonCancellable) {
+                        embeddingStore.upsertEmbeddings(refreshed)
+                        initialized = createdState
+                    }
+                } else {
+                    initialized = createdState
                 }
                 // Publish only after persistence succeeds. A failed write must leave initialization
                 // retryable instead of returning an unpersisted snapshot on the next call.
-                InitializedSearch(createdService, embeddingModelBacked, embeddingFallbackReason, initializationMillis)
-                    .also { initialized = it }
+                createdState
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {

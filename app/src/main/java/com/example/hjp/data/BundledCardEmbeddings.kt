@@ -26,7 +26,8 @@ internal class BundledCardEmbeddings(
         }
         return MODEL_NAME_PREFIX +
             "${stamp.string("runtime_model_sha256").take(16)};" +
-            "t=${stamp.string("runtime_tokenizer_sha256").take(16)}"
+            "t=${stamp.string("runtime_tokenizer_sha256").take(16)};" +
+            "i=${EmbeddingInput.SCHEMA_ID}"
     }
 
     fun load(modelName: String, currentCardIds: Set<String>): List<StoredCardEmbedding> {

@@ -6,6 +6,7 @@ import com.google.ai.edge.localagents.rag.models.EmbedData
 import com.google.ai.edge.localagents.rag.models.EmbeddingRequest
 import com.google.ai.edge.localagents.rag.models.GemmaEmbeddingModel
 import com.hjp.searchlookup.EmbeddingEngine
+import com.hjp.searchlookup.EmbeddingInput
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
@@ -62,7 +63,7 @@ class AndroidEmbeddingGemmaEngine(context: Context) : EmbeddingEngine, AutoClose
         run(EmbedData.create(input, EmbedData.TaskType.RETRIEVAL_DOCUMENT, false))
 
     override fun name(): String = if (modelHash.isNotBlank()) {
-        "$MODEL_NAME#m=${modelHash.take(16)};t=${tokenizerHash.take(16)}"
+        "$MODEL_NAME#m=${modelHash.take(16)};t=${tokenizerHash.take(16)};i=${EmbeddingInput.SCHEMA_ID}"
     } else {
         MODEL_NAME
     }

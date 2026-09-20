@@ -5,6 +5,7 @@ import com.hjp.tool.contract.ToolExecutionContext
 import com.hjp.tool.contract.ToolExecutionResult
 import com.hjp.tool.contract.ToolRequest
 import com.hjp.tool.contract.ToolAvailability
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
 import kotlinx.serialization.json.buildJsonObject
@@ -345,6 +346,46 @@ class ContactPluginsTest {
         assertEquals(2, writes)
         assertEquals(1, repository.embeddings.size)
         assertTrue(backend.configurationAvailable())
+    }
+
+    @Test
+    fun `completed vectors persist when parent cancels at the storage boundary`() = runBlocking {
+        val enteredPersistence = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releasePersistence = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val repository = object : EmbeddingFixtureRepository(listOf(
+            BusinessCardRecord("room-new", "New Person", memo = "AI"),
+        )) {
+            override suspend fun upsertEmbeddings(embeddings: List<StoredCardEmbedding>) {
+                enteredPersistence.complete(Unit)
+                releasePersistence.await()
+                super.upsertEmbeddings(embeddings)
+            }
+        }
+        val firstEngine = CountingEmbeddingGemma("model#cancel-at-persistence")
+        val backend = RyeongContactSearchBackend(
+            repository,
+            embeddingEngineFactory = { OnDeviceEmbeddingEngine.required(firstEngine) },
+            requireModelBacked = true,
+        )
+
+        val cancelledSearch = async { backend.search("AI", 5) }
+        enteredPersistence.await()
+        cancelledSearch.cancel(CancellationException("simulated turn timeout"))
+        releasePersistence.complete(Unit)
+        runCatching { cancelledSearch.await() }
+
+        assertTrue(cancelledSearch.isCancelled)
+        assertEquals(1, firstEngine.documentCalls)
+        assertEquals(1, repository.embeddings.size)
+
+        val restartedEngine = CountingEmbeddingGemma("model#cancel-at-persistence")
+        val restarted = RyeongContactSearchBackend(
+            repository,
+            embeddingEngineFactory = { OnDeviceEmbeddingEngine.required(restartedEngine) },
+            requireModelBacked = true,
+        )
+        assertEquals("HYBRID", restarted.search("AI", 5).mode)
+        assertEquals(0, restartedEngine.documentCalls)
     }
 
     @Test

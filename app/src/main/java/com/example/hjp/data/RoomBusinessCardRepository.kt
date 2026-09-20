@@ -12,6 +12,8 @@ import com.hjp.tool.contact.MutableBusinessCardRepository
 import com.hjp.tool.contact.StemDisambiguation
 import com.hjp.tool.contact.StoredCardEmbedding
 import com.hjp.searchlookup.QueryAnalyzer
+import com.hjp.searchlookup.EmbeddingInput
+import com.hjp.searchlookup.EmbeddingUpdater
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -24,6 +26,7 @@ class RoomBusinessCardRepository(
     private val seedRepository = AssetBusinessCardRepository(context)
     private val bundledEmbeddings = BundledCardEmbeddings(context, json)
     private val seedMutex = Mutex()
+    @Volatile private var baselineEmbeddingCacheReconciled = false
 
     override suspend fun loadAll(): List<BusinessCardRecord> {
         seedIfEmpty()
@@ -168,17 +171,46 @@ class RoomBusinessCardRepository(
                 dao.rebuildFts()
             }
 
-            // The 1,000-card semantic index is baseline application data, not an optional cache.
-            // Seed it with the cards so first-run tests/search never perform 1,000 live inferences.
-            val modelName = bundledEmbeddings.expectedModelName()
-            val cards = dao.loadAll()
-            if (dao.countEmbeddings(modelName) < cards.size) {
-                val existing = dao.loadEmbeddings(modelName).mapTo(hashSetOf()) { it.cardId }
-                val bundled = bundledEmbeddings.load(modelName, cards.mapTo(hashSetOf()) { it.id })
-                    .filterNot { it.cardId in existing }
-                if (bundled.isNotEmpty()) {
-                    dao.upsertEmbeddingsAtomically(bundled.map { it.toEmbeddingEntity() })
+            // The cache identity includes the embedding-input schema, not only the model files.
+            // Older releases used a whitespace/#tag document string with the same model name, so
+            // all 1,000 otherwise valid rows looked stale and were recomputed inside the first
+            // Agent turn. Reconcile once per process from the verified bundle, but only when the
+            // *current Room card* has exactly the source hash represented by that bundled vector.
+            // A user-modified card therefore remains untouched and is refreshed by the live model.
+            if (!baselineEmbeddingCacheReconciled) {
+                val modelName = bundledEmbeddings.expectedModelName()
+                val cards = dao.loadAll()
+                val currentHashes = cards.associate { entity ->
+                    val card = entity.toBusinessCardRecord(json)
+                    card.id to EmbeddingUpdater.sha256(
+                        EmbeddingInput.forCard(
+                            card.name, card.nameEn, card.company, card.title, card.department,
+                            card.industry, card.location, card.memo, card.tags,
+                        ),
+                    )
                 }
+                val existing = dao.loadEmbeddings(modelName).associateBy(CardEmbeddingEntity::cardId)
+                val bundled = runCatching {
+                    bundledEmbeddings.load(modelName, cards.mapTo(hashSetOf(), BusinessCardEntity::id))
+                }.onFailure {
+                    Log.w("HjpBundledEmbeddings", "Baseline bundle rejected; using live vectors", it)
+                }.getOrNull()
+                if (bundled != null) {
+                    val replacements = bundled.filter { candidate ->
+                        currentHashes[candidate.cardId] == candidate.sourceTextHash &&
+                            existing[candidate.cardId]?.let { stored ->
+                                stored.sourceTextHash == candidate.sourceTextHash &&
+                                    stored.dimension == candidate.dimension &&
+                                    stored.vectorBlob.size == candidate.vectorBlob.size
+                            } != true
+                    }
+                    if (replacements.isNotEmpty()) {
+                        dao.upsertEmbeddingsAtomically(replacements.map { it.toEmbeddingEntity() })
+                    }
+                }
+                // Asset validation failures fall back to live vectors for this process and retry on
+                // the next app start. Database write failures still escape before this assignment.
+                baselineEmbeddingCacheReconciled = true
             }
         }
     }

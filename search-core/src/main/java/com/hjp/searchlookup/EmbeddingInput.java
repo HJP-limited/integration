@@ -6,6 +6,13 @@ import java.util.List;
 
 /** Canonical document text shared by live and precomputed EmbeddingGemma vectors. */
 public final class EmbeddingInput {
+    /**
+     * Part of the vector-cache identity. Change this whenever the byte-for-byte document input
+     * contract changes; model/tokenizer hashes alone cannot distinguish vectors made from the same
+     * card with the old whitespace/#tag format from the canonical comma-separated format.
+     */
+    public static final String SCHEMA_ID = "canonical-v1";
+
     private EmbeddingInput() {}
 
     public static String forCard(String name, String nameEn, String company, String title,
