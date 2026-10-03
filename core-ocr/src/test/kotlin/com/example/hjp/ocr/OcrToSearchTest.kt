@@ -49,10 +49,14 @@ class OcrToSearchTest {
         // 매핑이 검색에 필요한 칸을 채웠는지 — 지역은 주소 전체가 아니라 지역명이어야 한다.
         assertEquals("한도윤", card.name)
         assertEquals("경기도", card.location)
-        assertEquals("010-2345-6789", card.phone)
+        assertEquals("", card.phone)
+        assertEquals("010-2345-6789", card.mobile)
+        assertEquals("010-2345-6789", card.primaryPhone)
 
-        val found = backend.search("한도윤", 5).hits.map { it.card.id }
+        val hits = backend.search("한도윤", 5).hits
+        val found = hits.map { it.card.id }
         assertTrue("방금 저장한 명함이 검색돼야 한다: $found", "S001" in found)
+        assertEquals(card, hits.single { it.card.id == "S001" }.card)
     }
 
     @Test

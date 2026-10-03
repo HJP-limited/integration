@@ -26,14 +26,11 @@ object OcrCardMapper {
     ): BusinessCardRecord {
         fun first(vararg labels: String): String =
             labels.firstNotNullOfOrNull { label ->
-                fields.firstOrNull { it.label == label }?.value
+                fields.firstOrNull { it.label == label && it.value.isNotBlank() }?.value?.trim()
             }.orEmpty()
 
         val address = first("주소")
-        // 휴대폰이 있으면 그쪽이 대표 번호다 — 명함에서 실제로 연락하는 번호.
-        val phone = first("휴대폰", "전화")
-
-        // 엔티티에 자리가 없는 것들(웹·로고·슬로건·팩스·한자명)은 잃지 않고 메모로 모은다.
+        // 엔티티에 자리가 없는 것들(로고·슬로건·팩스·한자명)은 메모로 모은다.
         // searchableText 가 memo 도 인덱싱하므로 "코비하우스" 같은 로고명으로도 검색된다.
         val extras = fields
             .filter { it.label in EXTRA_LABELS }
@@ -49,9 +46,8 @@ object OcrCardMapper {
             // industry — 명함 텍스트만으로는 정할 수 없다. 사용자가 나중에 채운다.
             industry = "",
             location = REGION.find(address)?.value.orEmpty(),
-            phone = phone,
-            // 명함에 둘 다 있으면 휴대폰이 phone 으로 올라가 있으므로 여기는 유선만 남긴다.
-            mobile = first("휴대폰").takeIf { it.isNotBlank() && it != phone }.orEmpty(),
+            phone = first("전화"),
+            mobile = first("휴대폰"),
             email = first("이메일"),
             address = address,
             website = first("웹"),

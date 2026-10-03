@@ -101,6 +101,7 @@ object FieldGrouping {
 
     /** "한우겸 WooKyum Han" 을 한글 이름과 영문 이름으로 가른다. */
     private fun splitKoreanEnglishName(field: Labeled): List<Labeled>? {
+        if (field.field !in setOf("name_ko", "name_en")) return null
         val m = KO_EN_NAME.matchEntire(field.text) ?: return null
         return listOf(
             field.copy(field = "name_ko", text = m.groupValues[1]),

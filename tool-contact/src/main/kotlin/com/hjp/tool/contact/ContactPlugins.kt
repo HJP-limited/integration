@@ -19,7 +19,9 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -258,6 +260,7 @@ class UpdateBusinessCardPlugin(
     private val repository: MutableBusinessCardRepository,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val onUpdated: suspend (BusinessCardUpdateResult) -> Unit = { },
+    private val onRolledBack: suspend () -> Unit = { },
 ) : TypedToolPlugin<UpdateBusinessCardInput, UpdateBusinessCardOutput>(
     ToolImplementationId("contact.update.local.v1"), ContactToolContracts.Update,
     UpdateInputCodec, UpdateOutputCodec,
@@ -270,15 +273,25 @@ class UpdateBusinessCardPlugin(
         request: ToolRequest,
         context: ToolExecutionContext,
     ): TypedToolResult<UpdateBusinessCardOutput> {
-        val result = repository.update(input.cardId, input.updates, input.clearFields, nowUtcIsoString())
+        coroutineContext.ensureActive()
+        // Record a completed DB write before cancellation can cross the suspend boundary.
+        val result = withContext(NonCancellable) {
+            repository.update(input.cardId, input.updates, input.clearFields, nowUtcIsoString())
+        }
             ?: return TypedToolResult.Failure(ToolError(
                 ToolErrorCode("contact.not_found"), "해당 명함을 찾을 수 없습니다.", false,
             ))
         try {
+            coroutineContext.ensureActive()
             onUpdated(result)
+            coroutineContext.ensureActive()
         } catch (refreshError: Throwable) {
             val restored = try {
-                withContext(NonCancellable) { repository.restore(result.before) }
+                withContext(NonCancellable) {
+                    val restored = repository.restore(result.before)
+                    if (restored) onRolledBack()
+                    restored
+                }
             } catch (restoreError: Throwable) {
                 refreshError.addSuppressed(restoreError)
                 false

@@ -17,7 +17,15 @@ data class BusinessCardRecord(
     val memo: String = "",
     val tags: List<String> = emptyList(),
     val updatedAt: String = "",
-)
+) {
+    /** Prefer the mobile for contact actions while retaining the office number separately. */
+    val primaryPhone: String get() = mobile.ifBlank { phone }
+}
+
+interface InsertableBusinessCardRepository : BusinessCardRepository {
+    suspend fun insert(record: BusinessCardRecord)
+    suspend fun delete(cardId: String): Boolean
+}
 
 interface BusinessCardRepository {
     suspend fun loadAll(): List<BusinessCardRecord>

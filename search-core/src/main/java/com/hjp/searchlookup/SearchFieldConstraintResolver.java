@@ -73,7 +73,7 @@ final class SearchFieldConstraintResolver {
 
     /** "성이 오", "성은 오씨" — never "성을 가진", where 가 is the start of the next word. */
     private static final Pattern SURNAME_PHRASE =
-            Pattern.compile("성(?:이|은) *([가-힣])(?:씨|(?![가-힣]))");
+            Pattern.compile("성(?:이|은) *([가-힣]{1,2}?)(?:씨|(?![가-힣]))");
 
     private final BusinessCardRepository repository;
 
@@ -97,9 +97,8 @@ final class SearchFieldConstraintResolver {
         List<String> companies = namedCompanies(analysis, vocabulary);
         List<String> surnames = new ArrayList<>();
         boolean namedAbsentSurname = false;
-        // "성이 오" / "성은 오씨" — the syllable is one character, so the token loop below never
-        // sees it. Read it off the sentence instead, and only when nothing else follows it as a
-        // name would: "성을 가진" must not be read as the surname 가.
+        // Read explicit surname phrases even when the analyzer drops a single syllable.
+        // "성을 가진" must not be read as the surname 가.
         // 사람은 띄어쓰기를 지키지 않는다 — "오씨 성", "오씨성", "성이 오씨" 가 모두 같은 질문이다.
         boolean asksAboutFamilyName = FAMILY_NAME_WORD.matcher(analysis.normalizedQuery).find()
                 || analysis.normalizedQuery.contains("씨성");
@@ -145,8 +144,10 @@ final class SearchFieldConstraintResolver {
             // have the same two-syllable shape, and they name a person — reading 첸/리 as a family
             // name made the search abstain on somebody who is in the address book.
             // "오씨성" — 질문과 성씨가 한 낱말에 붙어 있다.
-            if (token.length() >= 3 && token.startsWith("씨성", 1)) {
-                String glued = token.substring(0, 1);
+            int familyMarker = token.indexOf("씨성");
+            if (familyMarker == 1 || (familyMarker == 2
+                    && KoreanSurnames.isCompound(token.substring(0, 2)))) {
+                String glued = token.substring(0, familyMarker);
                 if (vocabulary.surnames.contains(glued)) {
                     addDistinct(surnames, glued);
                     continue;
@@ -156,8 +157,9 @@ final class SearchFieldConstraintResolver {
                     continue;
                 }
             }
-            if (token.length() == 2 && token.endsWith("씨")) {
-                String syllable = token.substring(0, 1);
+            if ((token.length() == 2 || (token.length() == 3
+                    && KoreanSurnames.isCompound(token.substring(0, 2)))) && token.endsWith("씨")) {
+                String syllable = token.substring(0, token.length() - 1);
                 // The roll decides. A syllable some stored name begins with is a family name
                 // whatever else the sentence says — which matters because the sentence does not
                 // always survive: the agent may hand this layer the short form ("정씨") after the
@@ -279,9 +281,10 @@ final class SearchFieldConstraintResolver {
                 }
             }
         }
-        if (token.length() == 3
-                && vocabulary.surnames.contains(token.substring(0, 1))
-                && vocabulary.givenNames.contains(token.substring(1))) {
+        String surname = KoreanSurnames.fromName(token);
+        if ((token.length() == 3 || token.length() == 4)
+                && !surname.isEmpty() && vocabulary.surnames.contains(surname)
+                && vocabulary.givenNames.contains(token.substring(surname.length()))) {
             return NameReading.BARE;
         }
         return NameReading.NOT_A_NAME;

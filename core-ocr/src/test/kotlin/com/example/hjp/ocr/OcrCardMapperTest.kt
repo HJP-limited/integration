@@ -56,10 +56,22 @@ class OcrCardMapperTest {
     }
 
     @Test
-    fun `휴대폰이 있으면 대표 번호로 삼는다`() {
+    fun `유선과 휴대폰을 각 필드에 보존하고 연락에는 휴대폰을 우선한다`() {
         val fields = realCardFields() + CardParser.Field("📱", "휴대폰", "010-6948-6596")
         val card = OcrCardMapper.toCard(fields, id = "OCR001", updatedAtMillis = 1L)
-        assertEquals("010-6948-6596", card.phone)
+        assertEquals("1588-4313", card.phone)
+        assertEquals("010-6948-6596", card.mobile)
+        assertEquals("010-6948-6596", card.primaryPhone)
+    }
+
+    @Test
+    fun `휴대폰만 있는 명함도 연락할 수 있다`() {
+        val card = OcrCardMapper.toCard(
+            listOf(CardParser.Field("📱", "휴대폰", "010-6948-6596")), "MOBILE", 1L,
+        )
+        assertEquals("", card.phone)
+        assertEquals("010-6948-6596", card.mobile)
+        assertEquals("010-6948-6596", card.primaryPhone)
     }
 
     @Test

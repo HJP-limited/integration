@@ -160,12 +160,7 @@ internal class DesktopAgent(
 
     val repository = SqliteContactRepository(dbPath)
 
-    val backend = RyeongContactSearchBackend(
-        repository = repository,
-        embeddingEngineFactory = {
-            OnDeviceEmbeddingEngine.production(onnx)
-        },
-    )
+    val backend = requiredDesktopSearchBackend(repository, onnx)
 
     private val directory = RepositoryContactDirectory(repository)
 
@@ -176,10 +171,10 @@ internal class DesktopAgent(
         SearchContactsPlugin(backend),
         CountContactsPlugin(backend),
         GetContactPlugin(backend),
-        UpdateBusinessCardPlugin(repository, onUpdated = {
-            directory.invalidate()
-            backend.refreshAfterCardChange()
-        }),
+        UpdateBusinessCardPlugin(repository,
+            onUpdated = { onCardsChanged() },
+            onRolledBack = { invalidateAfterRollback() },
+        ),
         GetCurrentDateTimePlugin(),
         CreateCalendarEventPlugin(object : CalendarComposerBackend {
             override fun isAvailable() = true
@@ -247,6 +242,17 @@ internal class DesktopAgent(
         directory.invalidate()
         backend.refreshAfterCardChange()
     }
+
+    private suspend fun invalidateAfterRollback() {
+        directory.invalidate()
+        backend.invalidate()
+    }
+
+    private val registration = com.hjp.tool.contact.BusinessCardRegistration(
+        repository, ::onCardsChanged, ::invalidateAfterRollback,
+    )
+
+    suspend fun addCard(card: com.hjp.tool.contact.BusinessCardRecord) = registration.add(card)
 
     suspend fun prepareModel() {
         if (!actualGemma) return
@@ -457,7 +463,7 @@ private fun runImport(args: List<String>) = runBlocking {
             .mapNotNull { it.id.removePrefix("S").toIntOrNull() }
         val id = "S" + ((used.maxOrNull() ?: 0) + 1).toString().padStart(3, '0')
         val card = OcrCardMapper.toCard(fields, id, System.currentTimeMillis())
-        agent.repository.insertAll(listOf(card))
+        agent.addCard(card)
         println()
         println("저장: ${card.id} · ${card.name} · ${card.company} · location=${card.location}")
         println("전체 ${agent.repository.count()}장")

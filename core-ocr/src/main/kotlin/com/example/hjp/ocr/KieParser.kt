@@ -87,9 +87,7 @@ class KieParser private constructor(
         private const val CANARY_TEXT = "010-1234-5678"
         private const val CANARY_FIELD = "mobile"
 
-        private val EMAIL = Regex("""[\w.+-]+@[\w-]+(\.[\w-]+)+""")
         private val PHONE = Regex("""(?:0\d{1,2}|1\d{3})[-. ]?\d{3,4}[-. ]?\d{4}""")
-        private val URL_PREFIX = Regex("""(?i)^\s*(W|Web|Website|Homepage)[.: ]*""")
         private val ADDR_PREFIX = Regex("""(?i)^\s*(Address|주소)[.: ]*""")
         /** 디자인용 선행 기호. "↑ 서울시…", ") 010-…" 처럼 검출에 딸려 들어온다. */
         private val JUNK_PREFIX = Regex("""^[^\w가-힣(]+""")
@@ -192,8 +190,7 @@ class KieParser private constructor(
      * 걸린다. 위험한 건 조용한 쪽뿐이라, 확실한 문장 하나를 넣어 보고 답이 맞는지 본다.
      * 시작할 때 한 번, 추론 한 번이면 끝난다.
      *
-     * 틀리면 null 을 돌려 [CardParser] 휴리스틱으로 내려간다 — 정확도는 떨어져도(98.0% ->
-     * 85.3%) 틀린 값을 명함에 저장하는 것보다 낫다.
+     * 틀리면 생성이 실패하고 통합앱은 필수 모델 오류로 인식을 중단한다.
      */
     private fun pairLooksConsistent(): Boolean = runCatching {
         classify(listOf(CANARY_TEXT)).firstOrNull() == CANARY_FIELD
@@ -230,14 +227,13 @@ class KieParser private constructor(
         val out = ArrayList<CardParser.Field>()
         for (entry in grouped) {
             val t = entry.text
-            val field = entry.field
+            val (field, contactValue) = KieContactFields.normalize(entry.field, t)
             if (t.length < 2 || LABEL_ONLY.matches(t)) continue
             val (icon, label, _) = FIELD_UI[field] ?: continue
             val value = when (field) {
-                "email" -> EMAIL.find(t)?.value ?: t
+                "email", "website" -> contactValue
                 "mobile", "tel_office", "fax" -> PHONE.find(t)?.value ?: clean(t)
                 "address_ko" -> clean(t.replace(ADDR_PREFIX, ""))
-                "website" -> t.replace(URL_PREFIX, "").trim().ifEmpty { t }
                 else -> clean(t)
             }
             if (value.isBlank()) continue

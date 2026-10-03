@@ -189,9 +189,7 @@ private fun runOcrUpload(agent: DesktopAgent, image: ByteArray, save: Boolean): 
                             .filter { it.id.startsWith("S") }
                             .mapNotNull { it.id.removePrefix("S").toIntOrNull() }
                         val id = "S" + ((used.maxOrNull() ?: 0) + 1).toString().padStart(3, '0')
-                        agent.repository.insertAll(listOf(cardFrom(fields, id)))
-                        // 앱이 저장 직후 하는 것과 같은 일. 이게 없으면 방금 넣은 명함이 검색에 안 잡힌다.
-                        agent.onCardsChanged()
+                        agent.addCard(cardFrom(fields, id))
                         savedId = id
                     }
                 }

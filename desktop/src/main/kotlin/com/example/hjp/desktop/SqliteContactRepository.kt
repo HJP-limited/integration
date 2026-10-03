@@ -7,6 +7,7 @@ import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.BusinessCardUpdateResult
 import com.hjp.tool.contact.KeywordSearchCandidate
 import com.hjp.tool.contact.MutableBusinessCardRepository
+import com.hjp.tool.contact.InsertableBusinessCardRepository
 import com.hjp.tool.contact.GluedTermSplitter
 import com.hjp.tool.contact.SearchIndexText
 import com.hjp.tool.contact.StemDisambiguation
@@ -28,6 +29,7 @@ import java.sql.ResultSet
  */
 class SqliteContactRepository(dbPath: String) :
     MutableBusinessCardRepository,
+    InsertableBusinessCardRepository,
     BusinessCardKeywordIndex,
     BusinessCardEmbeddingStore,
     AutoCloseable {
@@ -106,8 +108,49 @@ class SqliteContactRepository(dbPath: String) :
     /** 넣고 **바로** FTS 를 다시 만든다 — 안 그러면 방금 넣은 명함이 검색에 안 걸린다. */
     fun insertAll(records: List<BusinessCardRecord>) {
         if (records.isEmpty()) return
+        transaction { writeCards(records, replace = true) }
+    }
+
+    override suspend fun insert(record: BusinessCardRecord) {
+        transaction { writeCards(listOf(record), replace = false) }
+    }
+
+    override suspend fun delete(cardId: String): Boolean = transaction {
+        for (table in listOf("card_embeddings", "business_cards")) {
+            val key = if (table == "card_embeddings") "card_id" else "id"
+            conn.prepareStatement("DELETE FROM $table WHERE $key = ?").use { ps ->
+                ps.setString(1, cardId)
+                ps.executeUpdate()
+            }
+        }
+        rebuildFts()
+        getCardExists(cardId).not()
+    }
+
+    private fun getCardExists(cardId: String): Boolean =
+        conn.prepareStatement("SELECT 1 FROM business_cards WHERE id = ?").use { ps ->
+            ps.setString(1, cardId)
+            ps.executeQuery().use { it.next() }
+        }
+
+    private fun <T> transaction(block: () -> T): T {
+        val ownsTransaction = conn.autoCommit
+        if (ownsTransaction) conn.autoCommit = false
+        try {
+            val result = block()
+            if (ownsTransaction) conn.commit()
+            return result
+        } catch (error: Throwable) {
+            if (ownsTransaction) conn.rollback()
+            throw error
+        } finally {
+            if (ownsTransaction) conn.autoCommit = true
+        }
+    }
+
+    private fun writeCards(records: List<BusinessCardRecord>, replace: Boolean) {
         conn.prepareStatement(
-            "INSERT OR REPLACE INTO business_cards VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT ${if (replace) "OR REPLACE " else ""}INTO business_cards VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         ).use { ps ->
             records.forEach { card ->
                 val values = listOf(

@@ -35,6 +35,7 @@ class RyeongContactSearchBackend(
     private val initMutex = Mutex()
     private data class InitializedSearch(
         val service: SearchLookupService,
+        val recordsById: Map<String, BusinessCardRecord>,
         val modelBacked: Boolean,
         val fallbackReason: String,
         val initializationMillis: Long,
@@ -70,7 +71,9 @@ class RyeongContactSearchBackend(
         }
         val hits = response.results.map { result ->
             ContactSearchHit(
-                card = result.card.toRecord(),
+                card = checkNotNull(state.recordsById[result.cardId]) {
+                    "Search result is absent from the card snapshot: ${result.cardId}"
+                },
                 score = result.score,
                 matchSummary = matchSummary(response.queryAnalysis.tokens, result.card, result.retrievalSources),
                 rank = result.rank,
@@ -144,12 +147,21 @@ class RyeongContactSearchBackend(
      * [BusinessCardEmbeddingStore]. This method is deliberately strict: adding a card must not be
      * reported as complete when the required embedding model silently fell back to keyword search.
      */
-    suspend fun refreshAfterCardChange() = withContext(Dispatchers.Default) {
-        invalidate()
-        val state = requireService()
-        check(state.modelBacked) {
-            "Business-card embedding refresh failed: " +
-                state.fallbackReason.ifBlank { "model-backed embedding unavailable" }
+    suspend fun refreshAfterCardChange() {
+        try {
+            withContext(Dispatchers.Default) {
+                invalidate()
+                val state = requireService()
+                check(state.modelBacked) {
+                    "Business-card embedding refresh failed: " +
+                        state.fallbackReason.ifBlank { "model-backed embedding unavailable" }
+                }
+            }
+        } catch (error: Throwable) {
+            // Cancellation may arrive while returning from withContext, after publication.
+            // Never leave that just-published mutation snapshot live during rollback.
+            withContext(NonCancellable) { invalidate() }
+            throw error
         }
     }
 
@@ -190,6 +202,7 @@ class RyeongContactSearchBackend(
                 val embeddingFallbackReason = if (embeddingModelBacked) "" else embeddingEngine.diagnosticStatus()
                 val createdState = InitializedSearch(
                     createdService,
+                    cards.associateBy { it.id },
                     embeddingModelBacked,
                     embeddingFallbackReason,
                     initializationMillis,
@@ -242,22 +255,6 @@ class RyeongContactSearchBackend(
         address,
         memo,
         tags,
-    )
-
-    private fun BusinessCard.toRecord() = BusinessCardRecord(
-        id = id,
-        name = name,
-        nameEn = nameEn,
-        company = company,
-        title = title,
-        department = department,
-        industry = industry,
-        location = location,
-        phone = phone,
-        email = email,
-        address = address,
-        memo = memo,
-        tags = tags,
     )
 
     private fun StoredCardEmbedding.toRyeongEmbedding() = CardEmbedding(

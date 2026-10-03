@@ -142,12 +142,12 @@ final class SearchFieldConstraintMatcher {
         return Collections.unmodifiableList(exact);
     }
 
-    /** The family name is the first syllable of the stored name, not a substring of the card. */
+    /** Use the same surname boundary as the vocabulary, including compounds. */
     private static boolean carriesRequestedSurname(BusinessCard card, SearchFieldConstraintPlan plan) {
-        String name = SearchFieldVocabulary.normalize(card.name).replace(" ", "");
-        if (name.isEmpty()) return false;
+        String storedSurname = KoreanSurnames.fromName(card.name);
+        if (storedSurname.isEmpty()) return false;
         for (String surname : plan.surnames) {
-            if (!surname.isEmpty() && name.startsWith(surname)) return true;
+            if (surname.equals(storedSurname)) return true;
         }
         return false;
     }

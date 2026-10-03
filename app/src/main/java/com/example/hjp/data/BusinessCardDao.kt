@@ -22,6 +22,9 @@ interface BusinessCardDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(cards: List<BusinessCardEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertNew(card: BusinessCardEntity)
+
     @Update
     suspend fun update(card: BusinessCardEntity)
 
@@ -61,6 +64,12 @@ interface BusinessCardDao {
     @Transaction
     suspend fun insertAllAndReindex(cards: List<BusinessCardEntity>) {
         insertAll(cards)
+        rebuildFts()
+    }
+
+    @Transaction
+    suspend fun insertNewAndReindex(card: BusinessCardEntity) {
+        insertNew(card)
         rebuildFts()
     }
 

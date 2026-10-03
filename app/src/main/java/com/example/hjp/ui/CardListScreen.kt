@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,8 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hjp.tool.contact.BusinessCardRecord
 import com.example.hjp.CardDirectory
+import com.example.hjp.DirectorySearchController
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private enum class SortOrder(val label: String) {
@@ -56,32 +57,23 @@ fun CardListScreen(
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(SortOrder.Recent) }
     var all by remember { mutableStateOf<List<BusinessCardRecord>>(emptyList()) }
-    var hits by remember { mutableStateOf<List<BusinessCardRecord>?>(null) }
-    var searching by remember { mutableStateOf(false) }
+    val searchController = remember(directory, scope) {
+        DirectorySearchController(scope) { q ->
+            withContext(Dispatchers.IO) { directory.search(q, 20) }
+        }
+    }
+    val searchState by searchController.state.collectAsState()
+    val hits = searchState.results
 
     LaunchedEffect(Unit) {
         all = withContext(Dispatchers.IO) { directory.recentCards(Int.MAX_VALUE) }
     }
 
     fun runSearch() {
-        val q = query.trim()
-        if (q.isEmpty()) {
-            hits = null
-            return
-        }
-        searching = true
-        scope.launch {
-            // 에이전트가 쓰는 것과 **같은 검색**을 부른다. 목록에서 찾은 사람과 채팅에서
-            // 찾은 사람이 다르면 사용자는 둘 중 무엇을 믿어야 할지 알 수 없다.
-            val found = withContext(Dispatchers.IO) {
-                runCatching { directory.search(q, 20) }.getOrDefault(emptyList())
-            }
-            hits = found
-            searching = false
-        }
+        searchController.submit(query)
     }
 
-    val shown = (hits ?: all).let { list ->
+    val shown = (if (searchState.failed || searchState.searching) emptyList() else hits ?: all).let { list ->
         when (sort) {
             SortOrder.Recent -> list
             SortOrder.Name -> list.sortedBy { it.name }
@@ -102,7 +94,7 @@ fun CardListScreen(
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface) {
             TextField(
                 value = query,
-                onValueChange = { query = it; if (it.isBlank()) hits = null },
+                onValueChange = { query = it; searchController.reset() },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("이름, 회사, 직급 검색", fontSize = 14.sp) },
                 leadingIcon = { Text(HjpIcons.SEARCH, fontSize = 18.sp) },
@@ -131,7 +123,8 @@ fun CardListScreen(
         }
 
         val header = when {
-            searching -> "검색 중…"
+            searchState.searching -> "검색 중…"
+            searchState.failed -> "검색 실패 · 잠시 후 다시 검색해 주세요."
             hits != null -> "검색 결과 ${shown.size}건"
             else -> "전체 ${shown.size}장"
         }

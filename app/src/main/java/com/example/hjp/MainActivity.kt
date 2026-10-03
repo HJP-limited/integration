@@ -648,7 +648,7 @@ private fun BusinessCardResultCard(card: BusinessCardRecord, onClick: (() -> Uni
             if (card.department.isNotBlank() || card.location.isNotBlank()) {
                 Text(card.department + " · " + card.location, style = MaterialTheme.typography.bodySmall)
             }
-            Text(card.phone + "  " + card.email, style = MaterialTheme.typography.bodySmall)
+            Text(card.primaryPhone + "  " + card.email, style = MaterialTheme.typography.bodySmall)
             if (card.address.isNotBlank()) {
                 Text(card.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -717,6 +717,7 @@ private fun CardDetailDialog(card: BusinessCardRecord, onDismiss: () -> Unit) {
                     "업종" to card.industry,
                     "지역" to card.location,
                     "전화" to card.phone,
+                    "휴대폰" to card.mobile,
                     "이메일" to card.email,
                     "주소" to card.address,
                     "메모" to card.memo,
@@ -885,6 +886,7 @@ private fun ServiceEntry(application: HjpApplication) {
                         active.contactRepository,
                         active.directorySearchBackend,
                         active::refreshAfterCardAdded,
+                        active::invalidateAfterCardRollback,
                     )
                 }
                 HjpApp(active, directory)

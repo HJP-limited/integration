@@ -92,7 +92,7 @@ fun CardDetailScreen(
                     )
                 }
                 Column(Modifier.padding(top = 22.dp)) {
-                    listOf(card.email, card.phone, card.location).filter { it.isNotBlank() }.forEach {
+                    listOf(card.email, card.primaryPhone, card.location).filter { it.isNotBlank() }.forEach {
                         Text(it, color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
                     }
                 }
@@ -101,8 +101,8 @@ fun CardDetailScreen(
 
         SectionCard {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ActionButton(HjpIcons.PHONE, "전화", Modifier.weight(1f), card.phone.isNotBlank()) {
-                    open(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${card.phone}")))
+                ActionButton(HjpIcons.PHONE, "전화", Modifier.weight(1f), card.primaryPhone.isNotBlank()) {
+                    open(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${card.primaryPhone}")))
                 }
                 ActionButton(HjpIcons.MAIL, "메일", Modifier.weight(1f), card.email.isNotBlank()) {
                     open(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${card.email}")))
@@ -118,6 +118,10 @@ fun CardDetailScreen(
             InfoRow("이메일", card.email)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             InfoRow("전화", card.phone)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            InfoRow("휴대폰", card.mobile)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            InfoRow("웹", card.website)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             InfoRow("주소", card.address)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

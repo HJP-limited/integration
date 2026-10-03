@@ -76,7 +76,7 @@ public final class SearchLookupService implements RetrievalService {
         if(actual!=RetrievalMode.KEYWORD_ONLY){
             try {
                 semantic=semanticRetriever.retrieve(analysis,Integer.MAX_VALUE);
-                if(!embeddingEngine.isModelBacked()||semantic.isEmpty()){
+                if(!embeddingEngine.isModelBacked()){
                     actual=RetrievalMode.KEYWORD_ONLY;
                     keyword=keywordResults(analysis,indexedKeywordResults);
                     semantic=Collections.emptyList();

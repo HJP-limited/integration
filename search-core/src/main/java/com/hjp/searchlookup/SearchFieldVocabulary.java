@@ -64,10 +64,10 @@ final class SearchFieldVocabulary {
     /** Every name a card carries, normalised. The evidence for "this person exists in the data". */
     final Set<String> personNames;
 
-    /** First syllables of the names in the data. A name is built from parts the data already uses. */
+    /** Surnames of stored Korean names, including compound surnames. */
     final Set<String> surnames;
 
-    /** Everything after the first syllable of the names in the data. */
+    /** Everything after the surname of the names in the data. */
     final Set<String> givenNames;
 
     private SearchFieldVocabulary(Set<String> administrativeLocations, Set<String> locationTerms,
@@ -175,15 +175,14 @@ final class SearchFieldVocabulary {
         }
         // A word the cards use as a place stays a place, even if some company name repeats it.
         nonLocations.removeAll(locations);
-        // A name is read as "a surname the data uses + a given name the data uses". Splitting after
-        // the first syllable is what Korean names allow; it is deliberately not a name list, because
-        // the case that has to abstain is exactly the name that is *not* in the list.
+        // Read surname and given name from the same boundary used by the constraint matcher.
         Set<String> surnames = new LinkedHashSet<>();
         Set<String> givenNames = new LinkedHashSet<>();
         for (String name : names) {
-            if (name.length() >= 2) {
-                surnames.add(name.substring(0, 1));
-                givenNames.add(name.substring(1));
+            String surname = KoreanSurnames.fromName(name);
+            if (!surname.isEmpty()) {
+                surnames.add(surname);
+                givenNames.add(name.replace(" ", "").substring(surname.length()));
             }
         }
         return new SearchFieldVocabulary(administrative, locations, titles, nonLocations, haystacks,

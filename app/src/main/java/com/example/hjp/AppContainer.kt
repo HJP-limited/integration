@@ -143,6 +143,11 @@ class AppContainer(context: Context) : AutoCloseable {
         contactDirectory.invalidate()
         rawContactBackend.refreshAfterCardChange()
     }
+
+    suspend fun invalidateAfterCardRollback() {
+        contactDirectory.invalidate()
+        rawContactBackend.invalidate()
+    }
     private val plugins = listOf(
         SearchContactsPlugin(contactBackend),
         CountContactsPlugin(contactBackend),
@@ -156,6 +161,7 @@ class AppContainer(context: Context) : AutoCloseable {
                 // Do not report completion until the updated document vector is persisted and live.
                 rawContactBackend.refreshAfterCardChange()
             },
+            onRolledBack = ::invalidateAfterCardRollback,
         ),
         CreateCalendarEventPlugin(AndroidCalendarComposerBackend(appContext)),
         OpenComposePlugin(AndroidMessageComposerBackend(appContext)),

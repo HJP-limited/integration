@@ -3,8 +3,7 @@ package com.example.hjp
 import com.example.hjp.data.RoomBusinessCardRepository
 import com.hjp.tool.contact.BusinessCardRecord
 import com.hjp.tool.contact.ContactSearchBackend
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
+import com.hjp.tool.contact.BusinessCardRegistration
 
 /**
  * 화면이 명함 데이터에 닿는 단 하나의 창구.
@@ -22,7 +21,9 @@ class CardDirectory(
     private val repository: RoomBusinessCardRepository,
     private val backend: ContactSearchBackend,
     private val onCardAdded: suspend () -> Unit,
+    onRolledBack: suspend () -> Unit = {},
 ) {
+    private val registration = BusinessCardRegistration(repository, onCardAdded, onRolledBack)
     suspend fun allCards(): List<BusinessCardRecord> = repository.loadAll()
 
     /** 최근 추가 순. OCR 로 방금 넣은 명함이 맨 위에 온다. */
@@ -52,27 +53,6 @@ class CardDirectory(
     }
 
     suspend fun addCard(record: BusinessCardRecord) {
-        require(repository.getById(record.id) == null) { "Business card ID already exists: ${record.id}" }
-        repository.insert(record)
-        // Saving is not complete until every consumer has dropped its old snapshot and the new
-        // document vector has been generated and persisted. The callback throws if that cannot be
-        // guaranteed, so the UI never claims an embedding-less card was fully registered.
-        try {
-            onCardAdded()
-        } catch (refreshError: Throwable) {
-            val removed = try {
-                withContext(NonCancellable) { repository.delete(record.id) }
-            } catch (deleteError: Throwable) {
-                refreshError.addSuppressed(deleteError)
-                false
-            }
-            if (!removed) {
-                throw IllegalStateException(
-                    "OCR card insert failed after persistence and could not be rolled back",
-                    refreshError,
-                )
-            }
-            throw refreshError
-        }
+        registration.add(record)
     }
 }

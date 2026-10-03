@@ -17,6 +17,14 @@ class FieldGroupingTest {
     private val cardWidth = 600
     private val cardHeight = 340
 
+    @Test
+    fun bilingualCompaniesKeepTheirKieLabel() {
+        for (label in listOf("company_ko", "company_en", "department", "other")) {
+            val original = line("삼성 Samsung", label, 40, 40)
+            assertEquals(listOf(original), FieldGrouping.splitMultifield(listOf(original)))
+        }
+    }
+
     /** 글줄 하나. 높이 20px 로 고정해 세로 간격 판정을 눈에 보이게 한다. */
     private fun line(text: String, field: String, left: Int, top: Int, width: Int = 300): FieldGrouping.Labeled =
         FieldGrouping.Labeled(

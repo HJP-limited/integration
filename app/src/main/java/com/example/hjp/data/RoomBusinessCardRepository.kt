@@ -9,6 +9,7 @@ import com.hjp.tool.contact.BusinessCardKeywordIndex
 import com.hjp.tool.contact.GluedTermSplitter
 import com.hjp.tool.contact.KeywordSearchCandidate
 import com.hjp.tool.contact.MutableBusinessCardRepository
+import com.hjp.tool.contact.InsertableBusinessCardRepository
 import com.hjp.tool.contact.StemDisambiguation
 import com.hjp.tool.contact.StoredCardEmbedding
 import com.hjp.searchlookup.QueryAnalyzer
@@ -22,7 +23,7 @@ class RoomBusinessCardRepository(
     context: Context,
     private val dao: BusinessCardDao,
     private val json: Json = Json,
-) : MutableBusinessCardRepository, BusinessCardEmbeddingStore, BusinessCardKeywordIndex {
+) : MutableBusinessCardRepository, InsertableBusinessCardRepository, BusinessCardEmbeddingStore, BusinessCardKeywordIndex {
     private val seedRepository = AssetBusinessCardRepository(context)
     private val bundledEmbeddings = BundledCardEmbeddings(context, json)
     private val seedMutex = Mutex()
@@ -75,16 +76,16 @@ class RoomBusinessCardRepository(
     /**
      * 촬영으로 새로 만든 명함을 넣는다. Agent_0910 에는 OCR 트랙이 없어 이 경로가 없었다.
      *
-     * 넣고 **바로 FTS 를 다시 만든다**(insertAllAndReindex). 안 그러면 방금 찍은 명함이
+     * 넣고 **바로 FTS 를 다시 만든다**(insertNewAndReindex). 안 그러면 방금 찍은 명함이
      * 목록에는 보이는데 검색으로는 안 나온다 — 키워드 인덱스가 옛 상태로 남기 때문이다.
      */
-    suspend fun insert(record: BusinessCardRecord) {
+    override suspend fun insert(record: BusinessCardRecord) {
         seedIfEmpty()
-        dao.insertAllAndReindex(listOf(record.toBusinessCardEntity(json)))
+        dao.insertNewAndReindex(record.toBusinessCardEntity(json))
     }
 
     /** Rollback path for an OCR insert whose required embedding refresh failed. */
-    suspend fun delete(cardId: String): Boolean {
+    override suspend fun delete(cardId: String): Boolean {
         if (dao.getById(cardId) == null) return true
         dao.deleteAndReindex(cardId)
         return dao.getById(cardId) == null
