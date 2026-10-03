@@ -11,6 +11,39 @@
 | `kie_labels.json` | 208 B | index → 필드명 15종 | O |
 | `kie_minilm_int8.onnx` | **36.6 MB** | fine-tuned MiniLM 분류기, dynamic int8 + 어휘 축소 | **X (gitignore)** |
 
+## KIE 반입 출처와 빌드 준비
+
+원본 OCR 저장소 `HJP-limited/HJP_limitededition`의 `r1_phase2_sprint_c`, 고정 커밋
+`010d3b1344b6083c45507ac9866919d5d87808c9`의 `OCR/kie/README.md`는
+**이미 축소된 배포본**의 위치를 Drive `HJP/KIE_demo/onnx/`로 명시한다.
+사용자가 제공한 공유 폴더는 [KIE Drive 폴더](https://drive.google.com/drive/folders/1wk29PVWRh7G_CUQgRYJSFEQy9uVdv13F)다.
+2026-10-04 공개 폴더 목록에서 세 파일의 이름·파일 ID·바이트 크기를 직접 확인했다.
+세 파일을 별도 검증 경로로 다운로드해 현재 APK 자산과 바이트 크기·SHA-256이 모두 일치하는 것도 확인했다.
+링크만으로 동일 모델이라고 판정하지 말고 아래의 바이트 크기와 SHA-256을 확인한다.
+
+새 clone에서는 해당 배포본의 `kie_minilm_int8.onnx`를 받아
+`app/src/main/assets/ocr/kie_minilm_int8.onnx`에 놓는다. 이미 Git에 있는 토크나이저·라벨은
+이 축소본과 한 벌이다. `best.pt`나 118MB 원본 ONNX는 이 파일의 대체물이 아니다.
+빌드 준비에 원본 체크포인트를 다시 변환할 필요는 없다.
+
+| 파일 | 바이트 | SHA-256 |
+|---|---:|---|
+| [kie_minilm_int8.onnx](https://drive.google.com/file/d/1kTZ5gw0Xyiz9Z9-DJlFW0z4hU2tJvyBC/view) | 36591345 | `3fd1287d76151f463e0328a0c7250c75e89e16e1c666808e03cfe3a83919e389` |
+| [kie_tokenizer.onnx](https://drive.google.com/file/d/1FlL8_zgiWtP9-SgItzkjivHRUFIW6YAF/view) | 850382 | `bbfd74e2ee719b44f0101e6c08fad6276c5a38ce849cd0e56defac25ab32f874` |
+| [kie_labels.json](https://drive.google.com/file/d/1Rl0GiHQepy2Vish3Np9hKkRkmAzwfpML/view) | 208 | `482de0d2a2037ef30907259d20fd02ffdf473a96fd899dfeb88528c0e9c6888a` |
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath '.\app\src\main\assets\ocr\kie_minilm_int8.onnx'
+```
+
+`prepareServiceModelAssets`와 APK 검사기는 세 파일의 고정 해시를 검사한다.
+debug/release 모두 누락·다른 모델·잘못된 토크나이저 짝이면 실패한다. 바이너리는 계속 Git에서 제외한다.
+
+원본 README의 학습 기록은 합성 500장 GT 텍스트, train/test 400/100 카드(seed 42),
+train 360/val 40 재분할, MiniLM-L12-H384 + 15클래스 분류 헤드다.
+이는 원본 문서의 학습 기록이며 이 세션에서 재학습하거나 실제 명함 품질을 재검증한 결과가 아니다.
+축소본 생성은 원본에서 2026-07-10에 기록했고, 통합앱 자산 교체는 2026-09-14에 기록했다.
+
 ### 이 둘은 반드시 한 벌로 쓴다
 
 분류기의 임베딩 행 번호가 곧 토크나이저가 내놓는 id 다. 섞어 쓰면:
@@ -21,7 +54,8 @@
   있는 조합이다.
 
 그래서 `KieParser` 가 시작할 때 확실한 문장 하나("010-1234-5678" -> `mobile`)를 넣어 보고,
-답이 틀리면 이 경로를 쓰지 않고 `CardParser` 휴리스틱으로 내려간다.
+답이 틀리면 생성에 실패한다. AndroidOcr와 노트북 loadOcr는 이를 필수 모델 오류로 처리한다.
+현재 실행 경로에서 휴리스틱 성공으로 대체하지 않는다.
 
 ### 어휘 축소본 (2026-09-14 교체)
 
@@ -29,9 +63,10 @@
 것들)이다. 명함 필드 분류에는 쓰이지 않으므로 상위 15,000 개만 남긴다
 (`OCR/kie/trim_vocab.py --ascii-cap 15000`). 임베딩 행 250,037 -> 37,258, 파일 113MB -> 36.6MB.
 
-**압축이 아니라 안 쓰는 어휘를 잘라내는 것**이라 분류 성능은 보존된다 — 인코더 12층(21.8MB)과
+어휘 임베딩을 줄인 것이며 인코더 12층(21.8MB)과
 분류기 헤드는 손대지 않는다. 실제로 두 파일의 텐서를 대조하면 헤드와 인코더 130 개가 비트
 단위로 같고, 다른 6 개는 position/token_type 임베딩의 양자화 차이(역양자화 후 최대 0.0046)뿐이다.
+원본의 제한된 평가 세트에서 정확도를 유지했다는 기록이며 모든 언어·실제 명함에 대한 보장은 아니다.
 
 알려진 손실: **한자 이름(`name_hanja`)**. 축소 규칙이 "여러 글자 조각은 한글이나 ASCII 가 끼어
 있어야 남긴다" 인데 한자는 거기 없어서 한자 조각이 잘린다. rec charset 에는 한자가 있으므로
@@ -63,7 +98,7 @@ python kie_export_classifier.py   # best.pt -> fp32(470.9MB) -> int8(113MB) + la
 
 현재 `app/src/main/assets/ocr/` 에 배치된 두 파일은 **둘 다 vocab trim 본**이다
 (37,258 vocab): 분류기 36.6MB, 토크나이저 0.85MB. `KieParser` 는 시작할 때 canary 분류를
-실행해 이 짝이 어긋나면 KIE 를 끄고 휴리스틱으로 내려간다.
+실행해 이 짝이 어긋나면 필수 모델 로드를 실패시킨다.
 
 축소 도구의 정본은 읽기 전용 리모트
 `upstream-ocr/r1_phase2_sprint_c` 의 `OCR/kie/trim_vocab.py`와

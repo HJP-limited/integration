@@ -41,8 +41,7 @@ android {
             // 노트북 에뮬레이터로 화면을 눈으로 확인하려면 x86_64 가 필요하다.
             // litertlm(대화)·onnxruntime·opencv(OCR)는 x86_64 를 제공하고,
             // EmbeddingGemma(localagents-rag)만 arm64 전용이라 에뮬레이터에서는 로드에
-            // 실패한다 — GemmaEmbeddingProvider 가 이를 잡아 키워드 검색으로 폴백하므로
-            // 벡터 검색만 빠지고 나머지는 그대로 돈다.
+            // 실패한다. 필수 모델 검증은 이를 실패로 처리하며 키워드 폴백으로 통과시키지 않는다.
             ndk {
                 abiFilters += "x86_64"
             }
@@ -69,24 +68,36 @@ abstract class PrepareServiceModelAssets : DefaultTask() {
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.NAME_ONLY)
     abstract val modelFiles: ConfigurableFileCollection
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val kieFiles: ConfigurableFileCollection
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
     @TaskAction fun prepare() {
         val hashes = mapOf(
             "embeddinggemma-300m.tflite" to "37115ef7bff76cd37dd86abe503ff511b1032bf85fc624a85c49c84899e92bc5",
-            "sentencepiece.model" to "d6daa52d93d7aad10e8388bd526c4e501d914b47177398d1d9621f1fe48438c7"
+            "sentencepiece.model" to "d6daa52d93d7aad10e8388bd526c4e501d914b47177398d1d9621f1fe48438c7",
+            "kie_minilm_int8.onnx" to "3fd1287d76151f463e0328a0c7250c75e89e16e1c666808e03cfe3a83919e389",
+            "kie_tokenizer.onnx" to "bbfd74e2ee719b44f0101e6c08fad6276c5a38ce849cd0e56defac25ab32f874",
+            "kie_labels.json" to "482de0d2a2037ef30907259d20fd02ffdf473a96fd899dfeb88528c0e9c6888a"
         )
-        val files = modelFiles.files.associateBy { it.name }
+        val files = (modelFiles.files + kieFiles.files).associateBy { it.name }
         hashes.forEach { (name, expected) ->
             val model = files[name]
-            check(model != null && model.isFile) { "Required bundled model missing: $name. Set HJP_MODEL_DIR." }
+            check(model != null && model.isFile) {
+                "Required bundled model missing: $name. See docs/OCR_ASSETS.md and docs/서비스형_모델준비_2026-09-16.md."
+            }
             val digest = MessageDigest.getInstance("SHA-256")
             model.inputStream().use { stream ->
                 val buffer = ByteArray(256 * 1024)
                 while (true) { val count = stream.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
             }
             check(digest.digest().joinToString("") { "%02x".format(it) } == expected) { "Bundled model hash mismatch: $name" }
+        }
+        // Validate the full KIE pair before generating any assets. KIE stays in assets/ocr.
+        modelFiles.files.forEach { model ->
+            val name = model.name
             val target = outputDirectory.file("models/$name").get().asFile
             target.parentFile.mkdirs()
             model.copyTo(target, overwrite = true)
@@ -98,6 +109,9 @@ val prepareServiceModelAssets = tasks.register<PrepareServiceModelAssets>("prepa
         rootProject.layout.projectDirectory.dir("../HJP_limitededition-main/models").asFile.absolutePath
     )
     modelFiles.from(source.map { path -> listOf("embeddinggemma-300m.tflite", "sentencepiece.model").map { File(path, it) } })
+    kieFiles.from(listOf("kie_minilm_int8.onnx", "kie_tokenizer.onnx", "kie_labels.json").map {
+        layout.projectDirectory.file("src/main/assets/ocr/$it")
+    })
     outputDirectory.set(layout.buildDirectory.dir("generated/serviceModelAssets"))
 }
 androidComponents.onVariants { variant ->

@@ -14,6 +14,7 @@ kotlin {
 }
 
 dependencies {
+    testImplementation(libs.junit)
     implementation(project(":core-ocr"))
     // 앱과 같은 에이전트 커널·도구·검색을 돌린다. 캘린더/메일은 위 sourceSets로
     // 실제 플러그인과 코덱을 공유하고, 외부 Android 화면 호출만 모의 처리한다.

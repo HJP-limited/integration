@@ -155,6 +155,23 @@ class SqliteContactRepository(dbPath: String) :
         return BusinessCardUpdateResult(before, after)
     }
 
+    override suspend fun restore(snapshot: BusinessCardRecord): Boolean {
+        if (getById(snapshot.id) == null) return false
+        val ownsTransaction = conn.autoCommit
+        if (ownsTransaction) conn.autoCommit = false
+        try {
+            insertAll(listOf(snapshot))
+            check(getById(snapshot.id) == snapshot) { "Card rollback did not restore the exact snapshot" }
+            if (ownsTransaction) conn.commit()
+            return true
+        } catch (error: Throwable) {
+            if (ownsTransaction) conn.rollback()
+            throw error
+        } finally {
+            if (ownsTransaction) conn.autoCommit = true
+        }
+    }
+
     /**
      * FTS 를 통째로 다시 만든다. 앱의 `BusinessCardDao.rebuildFts` 와 같은 동작이고,
      * 인덱스 문자열도 같은 칸을 같은 순서로 이어 붙인다(전화번호는 숫자만 남긴 형태도 함께).

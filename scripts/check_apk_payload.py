@@ -1,4 +1,5 @@
 """Verify the built APK contains current OCR assets and the full bundled 1000-card vector index."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -12,7 +13,11 @@ def digest(data):
 
 
 def main():
-    apk = ROOT / "app/build/outputs/apk/debug/app-debug.apk"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apk", type=Path, default=ROOT / "app/build/outputs/apk/debug/app-debug.apk")
+    parser.add_argument("--report", type=Path, default=ROOT / "build/apk-payload-check.json")
+    args = parser.parse_args()
+    apk = args.apk
     assets = ROOT / "app/src/main/assets"
     checks = []
     with zipfile.ZipFile(apk) as package:
@@ -23,6 +28,15 @@ def main():
         for name, expected in bundled.items():
             if digest(package.read("assets/models/" + name)) != expected:
                 raise RuntimeError("Missing/stale bundled service model: " + name)
+        # Check required KIE entries even when the local classifier is missing/ignored.
+        kie = {
+            "kie_minilm_int8.onnx": "3fd1287d76151f463e0328a0c7250c75e89e16e1c666808e03cfe3a83919e389",
+            "kie_tokenizer.onnx": "bbfd74e2ee719b44f0101e6c08fad6276c5a38ce849cd0e56defac25ab32f874",
+            "kie_labels.json": "482de0d2a2037ef30907259d20fd02ffdf473a96fd899dfeb88528c0e9c6888a",
+        }
+        for name, expected in kie.items():
+            if digest(package.read("assets/ocr/" + name)) != expected:
+                raise RuntimeError("Missing/stale KIE artifact: " + name)
         for name in ("Gemma-Terms.txt", "Gemma-Prohibited-Use.txt", "Apache-2.0.txt", "NOTICE.txt"):
             if package.read("assets/legal/" + name) != (assets / "legal" / name).read_bytes():
                 raise RuntimeError("Missing/stale model legal notice: " + name)
@@ -53,8 +67,9 @@ def main():
         if digest(ids_bytes) != fingerprint["ids_sha256"] or digest(vectors) != fingerprint["vectors_sha256"]:
             raise RuntimeError("Bundled vector fingerprint mismatch")
     report = {"passed": True, "scope": "packaged files and seed/vector consistency, not inference",
-              "seed_count": 1000, "vector_dimension": 768, "native_libraries": 6, "bundled_service_models": 2, "legal_documents": 4, "assets": checks}
-    (ROOT / "build/apk-payload-check.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+              "seed_count": 1000, "vector_dimension": 768, "native_libraries": 6, "bundled_service_models": 2, "kie_artifacts": 3, "legal_documents": 4, "assets": checks}
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"APK payload passed: 2 bundled service models, 4 legal documents, {len(checks)} OCR/card assets, 6 arm64 libraries, 1000 x 768 vectors")
 
 

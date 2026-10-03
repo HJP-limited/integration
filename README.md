@@ -1,6 +1,6 @@
 # HJP — 온디바이스 명함 서비스 (OCR + 검색 + 멀티턴 에이전트)
 
-명함을 찍어 저장하고, 자연어로 찾고, 대화로 이어 묻는 앱. **네트워크 없이 기기 안에서** 돈다.
+명함을 찍어 저장하고, 자연어로 찾고, 대화로 이어 묻는 앱. **모델 준비 후 네트워크 없이 기기 안에서** 돈다.
 
 따로 개발되던 세 트랙(OCR · 검색 · 멀티턴 에이전트)을 하나로 합친 저장소다.
 
@@ -26,6 +26,7 @@
 | `:search-core` | 검색 엔진 — RRF 융합·필드 제약·RAG 컨텍스트 | 순수 Java |
 | `:agent-local-gateway` | 모델 없이 도구를 고르는 규칙 게이트웨이 + 공용 시스템 프롬프트·이름 인덱스 | 순수 Kotlin/JVM |
 | `:core-ocr` | OCR 검출·인식·KIE. `OcrPipeline`, `KieParser`, `CardParser`, `OcrCardMapper` | 순수 Kotlin/JVM |
+| `:desktop` | 실제 Gemma·ONNX 임베딩 CLI 및 브라우저 테스트. 외부 화면 호출은 모의 처리 | Windows/JVM + Python |
 | `:app` | Android — Compose UI, Room, LiteRT-LM, 각 런타임 배선 | Android |
 
 에이전트·도구 계층은 `HJP-limited/HJP_dataset_gen_by_v1@Agent_0910` 에서 가져왔다.
@@ -45,7 +46,8 @@
 질문 → DeterministicTurnRouter (규칙 선판정: 되짚기·지시어·capability)
      → 모델이 도구를 고름
          · 앱: Gemma 4 E2B (LiteRT-LM)
-         · 노트북·에뮬레이터: 규칙 게이트웨이(:agent-local-gateway)
+         · 노트북 기본 웹 실행 / CLI --gemma: 실제 Gemma (Python LiteRT-LM)
+         · CLI --gemma 생략 / 웹 --rules: 규칙 게이트웨이(모델 품질 검증 아님)
      → 도구 실행 search_contacts / get_contact / update_business_card
                  / get_current_datetime / create_calendar_event / open_compose
      → AgentWorkflowPolicy 가 연쇄를 검증 → 답변
@@ -62,17 +64,31 @@
 # APK (debug 는 에뮬레이터용 x86_64 를 함께 담는다)
 ./gradlew :app:assembleDebug
 
-# 테스트 (446개)
+# 단위 테스트 (실제 모델/실기기 검증과 별도)
 ./gradlew test :app:testDebugUnitTest :tool-android-intents:testDebugUnitTest
 ```
 
-### 노트북 러너 — 저장소에 없다
+빌드 전에 Git에서 제외된 KIE 분류기와 검색 모델 두 파일을 준비해야 한다.
+정확한 다운로드 파일명·SHA-256·배치 경로는
+[모델 준비 절차](docs/서비스형_모델준비_2026-09-16.md#새-clone의-빌드-준비)에 있다.
+KIE 누락·짝 불일치 또는 검색 모델 누락·해시 불일치 시 debug/release 빌드가 실패한다.
 
-실기기 없이 같은 커널·도구·검색을 돌려 보는 JVM 러너를 따로 쓰고 있지만, **저장소에는 올리지
-않는다.** 여기에는 폰에서 도는 것만 둔다.
+### 노트북 러너
 
-`desktop/` 폴더가 로컬에 있으면 `settings.gradle.kts` 가 그때만 `:desktop` 을 빌드에 끼운다.
-없으면 조용히 건너뛰므로, 새로 clone 해도 빌드가 깨지지 않는다.
+`desktop/`은 Git 추적 대상이며 `:desktop` 모듈을 항상 포함한다.
+실제 Gemma 파일, ONNX 임베딩 export(외부 데이터·토크나이저 포함), Temurin Java 21과
+Python LiteRT-LM을 별도로 준비한다. Android TFLite 모델로 노트북 임베딩을 대신하지 않는다.
+
+```powershell
+.\scripts\run_desktop_web.ps1                  # http://127.0.0.1:8765, 실제 모델
+.\scripts\run_desktop_chat.ps1                 # 실제 모델 대화
+.\scripts\run_desktop_chat.ps1 -Regression     # 실제 모델 회귀
+```
+
+실행 중 `:desktop:installDist`를 다시 빌드하면 사용 중인 JAR가 바뀐다. 모델 실행과 빌드는
+순차 진행한다. 노트북의 메일·문자·일정은 SIMULATED이며 실제 외부 앱을 열지 않는다.
+환경변수와 실행 범위는 [노트북 웹 테스트](docs/노트북_웹테스트_2026-09-19.md),
+[실제 모델 CLI 검증](docs/검색_에이전트_노트북검증_2026-09-16.md)을 참고한다.
 
 ## 검색 구조
 
@@ -97,40 +113,40 @@
 
 ## 모델
 
-| 모델 | 크기 | 위치 | 저장소 포함 |
-|---|---|---|---|
-| PP-OCRv5 det / rec | 4.7M / 13M | `app/src/main/assets/ocr/` | O |
-| 글줄 방향 분류 `textline_ori.onnx` | 1.0M | 〃 | O |
-| KIE 토크나이저 · 라벨 | 4.9M / 208B | 〃 | O |
-| KIE 분류기 `kie_minilm_int8.onnx` | 113M | 〃 | **X** — `docs/OCR_ASSETS.md` 참조 |
-| Gemma 4 E2B (대화) | 2.4G | 기기 `files/models/` · 노트북은 `litert-lm import` | X |
-| FunctionGemma 270M (도구) | 276M | 〃 | X |
-| EmbeddingGemma 300M (`.tflite`) | 171M | 〃 | X |
-| EmbeddingGemma ONNX (노트북용) | 1.2G | `HJP_EMBED_MODEL_DIR` | X |
+| 모델/파일 | 크기(10진 MB/GB) | APK 포함 | Git 포함 | 사용자 준비 |
+|---|---|---|---|---|
+| PP-OCRv5 `det.onnx` / `rec.onnx` | 4.83 / 13.40 MB | O | O | 없음 |
+| `textline_ori.onnx` / 문자 사전 | 1.02 MB / 59 KB | O | O | 없음 |
+| KIE `kie_minilm_int8.onnx` | 36.59 MB | O | X | 없음. 개발자가 별도 배치 |
+| KIE `kie_tokenizer.onnx` / `kie_labels.json` | 0.85 MB / 208 B | O | O | 없음 |
+| EmbeddingGemma `.tflite` | 179.13 MB | O | X | 없음. 빌드 시 HJP_MODEL_DIR에서 가져옴 |
+| 검색 `sentencepiece.model` | 4.68 MB | O | X | 없음. 빌드 시 HJP_MODEL_DIR에서 가져옴 |
+| Gemma 4 E2B (대화·도구 호출) | 2.59 GB | X | X | 앱에서 약관 동의 후 다운로드 |
+| EmbeddingGemma ONNX (노트북용) | 약 1.2 GB + 토크나이저 | X | X | 노트북 검증을 할 때만 준비 |
 
-KIE 분류기가 없으면 `CardParser` 정규식 폴백으로 내려간다(라인 정확도 98.0% → 85.3%).
-임베더가 없으면 키워드 검색으로 폴백한다.
+기본 1,000개 명함과 768차원 사전 벡터 색인은 APK와 Git에 포함한다.
+FunctionGemma는 현재 배포 모델이 아니다. 필수 KIE/임베딩/생성 모델의 로드·실행 실패를
+모의 모델이나 키워드 폴백으로 통과 처리하지 않는다.
+검색용 SentencePiece와 KIE용 축소 XLM-R 토크나이저는 서로 호환되지 않는다.
 
 ### 노트북 임베딩
 
 안드로이드는 EmbeddingGemma 를 `.tflite` + AI Edge RAG SDK 로 돌리는데 그 SDK 네이티브가
 **arm64 전용**이라 x86_64(노트북·에뮬레이터)에서는 못 쓴다. 그래서 노트북 쪽만 ONNX
-런타임을 쓴다 — 모델과 전처리는 같다.
+런타임을 쓴다. Android 양자화 TFLite와 PC ONNX export의 결과·속도가 같다고 보장하지 않는다.
 
-정합 실측: 앱에 번들된 사전 계산 벡터와 **코사인 1.0000**. 결정적이었던 두 가지 —
+이전 샘플 정합 실측에서는 앱에 번들된 사전 계산 벡터와 **코사인 1.0000**이었다.
+전체 입력 동등성 검증은 아니다. 결정적이었던 두 가지 —
 태스크 프리픽스(`"task: search result | query: "` / `"title: none | text: "`)를 직접 붙여야
 하고(안드로이드는 SDK 가 자동으로 붙인다), 토크나이저는 `tokenizer.json` 을 그대로 읽는
-구현을 써야 한다(저장소 밖, 로컬 러너에 있다).
+구현을 써야 한다(`desktop/`의 실제 모델 러너가 사용한다).
 
 ## 알려진 한계
 
-- **debug APK 330.0MB** (2026-09-14 빌드, arm64 + x86_64). KIE 는 이미
-  vocab trim 본(36.6MB)이다. 자산을 바꾼 뒤에는 증분 빌드를 믿지 말고 APK 내부 파일을 확인한다.
-- **에뮬레이터에서 벡터 검색만 빠진다** — EmbeddingGemma 를 돌리는 AI Edge RAG SDK 의
-  네이티브가 arm64 전용이라 x86_64 에서 로드에 실패하고 키워드 검색으로 폴백한다.
-  OCR·대화 UI·로컬 도구 라우팅은 에뮬레이터에서 확인할 수 있지만 실제 Gemma 생성은 할 수
-  없다. DB 4→5 색인 마이그레이션은 합성 v4 DB로 Android 검증을 마쳤고, 실제 arm64 벡터
-  검색과 Gemma 생성은 실기기 재검증 대기 상태다(`docs/통합_점검_2026-09-14.md`).
+- debug에는 arm64와 x86_64 라이브러리가 포함돼 release보다 크다. 실제 크기는 빌드 산출물로
+  확인한다. `python scripts/check_apk_payload.py`로 필수 모델 해시·라이브러리·1,000개 색인을 검사한다.
+- **전체 모델 검증은 arm64 실기기가 필요하다.** EmbeddingGemma SDK는 arm64 전용이다.
+  x86_64 에뮬레이터 화면 확인이나 PC ONNX 추론을 Android 필수 모델 통과로 집계하지 않는다.
 - **새로 촬영한 명함의 임베딩은 폰과 노트북이 미세하게 다르다** — 폰은 양자화 tflite,
   노트북은 fp32 ONNX 로 계산한다. 번들된 1000장은 사전 계산본을 공유해 동일하다(코사인 1.0000).
 - **순서 지시("첫 번째 사람")는 직전 결과 목록만 본다.** 검색이 한 번 더 돌아 목록이 좁혀지면
@@ -141,9 +157,6 @@ KIE 분류기가 없으면 `CardParser` 정규식 폴백으로 내려간다(라�
 - **도구를 고르는 정확도는 82.12%** (Agent_0910 의 A-15 E-3.2 실측: 400시나리오/1,918턴,
   Gemma 4 E2B, 안드로이드 GPU). 인자 정확도 93.93%, 과제 전체 성공률 41.75% —
   여러 턴에 걸쳐 도구를 이어 쓰는 시나리오에서 중간에 끊긴다. `docs/` 참조.
-- **도구 연쇄 시험 4건이 꺼져 있다**(`@Ignore`). 셋은 라우터가 검색으로 분류한 문장을
-  게이트웨이 파서가 못 읽어 도구를 하나도 안 부르는 경우, 하나는 워크플로 정책이 정당하게
-  끝난 턴을 미완으로 보고 재촉하는 경우다. 각 `@Ignore` 에 진단을 적어 두었다.
 - 전화·지도 인텐트는 상대 앱이 자기 태스크로 열려 뒤로가기로 돌아오지 않는다(안드로이드
   기본 동작). Gmail 은 외부 호출용 액티비티라 돌아온다.
 
@@ -152,8 +165,10 @@ KIE 분류기가 없으면 `CardParser` 정규식 폴백으로 내려간다(라�
 - `docs/통합_인수인계_2026-09-14.md` — **합치면서 빠졌던 것들의 기록.** 다시 밟으면
   또 당하는 함정(색인 재생성·gradle 증분 패키징·모델 파일 짝)과 남은 일이 여기 있다
 - `docs/OCR_ASSETS.md` — OCR/KIE 모델 출처와 재생성 절차
+- `docs/서비스형_모델준비_2026-09-16.md` — APK 포함/다운로드 구분과 새 clone 빌드 준비
+- `docs/노트북_웹테스트_2026-09-19.md` — 브라우저 테스트 실행과 실기기 검증의 차이
 - `docs/검색_구조_설명.md`, `docs/멀티턴_인수인계.md` — 검색·멀티턴 설계 배경
 - `docs/성능지표.md` — 평가 지표
 - `scripts/eval_multiturn.py`, `scripts/hybrid_server.py` — 파이썬 미러. **Kotlin 이 정본이다.**
-  노트북 러너가 같은 Kotlin 코드를 돌리므로 새 작업은 그쪽을 쓴다(저장소 밖).
+  `desktop/` 러너가 같은 Kotlin 코드를 돌리므로 새 검증은 그쪽을 쓴다.
   파이썬 쪽은 130시나리오/377턴 평가 자산 때문에 남겨 둔 것이다.

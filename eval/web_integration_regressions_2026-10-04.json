@@ -1,0 +1,5 @@
+[
+  {"question":"오씨성 가진 사람 찾아줘","required_tools":["search_contacts"],"allowed_tools":["search_contacts","get_contact"],"surname":"오","grounded_names":true},
+  {"question":"첫 번째 사람 연락처","required_tools":["get_contact"],"allowed_tools":["get_contact"],"previous_result_index":0},
+  {"question":"문지영씨 전화번호","required_tools":["get_contact"],"allowed_tools":["get_contact"],"gold_ids":["T002"],"contains":["010-3001-6001"]}
+]
